@@ -7,3 +7,6 @@
 *.hex
 *.list
 .mxproject
+
+# STM32CubeCLT / IDE local bundle-manager state (not source)
+/.settings/

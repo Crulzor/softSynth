@@ -1,0 +1,24 @@
+{
+    "cmake.cmakePath": "cube-cmake",
+    "cmake.configureArgs": [
+        "-DCMAKE_COMMAND=cube-cmake"
+    ],
+    "cmake.preferredGenerators": [
+        "Ninja"
+    ],
+
+    // Use plain clangd (22.x) as the C/C++ language server.
+    "clangd.path": "/usr/bin/clangd",
+    "clangd.arguments": [
+        // Let clangd query the arm-none-eabi compiler for its builtin/system
+        // include paths (needed for <cstdint>, intrinsics, etc.).
+        "--query-driver=/opt/stm32cubeclt/GNU-tools-for-STM32/bin/arm-none-eabi-*",
+        "--background-index",
+        "--clang-tidy",
+        "--header-insertion=never",
+        "--completion-style=detailed"
+    ],
+
+    // Turn off Microsoft cpptools' IntelliSense so it doesn't fight clangd.
+    "C_Cpp.intelliSenseEngine": "disabled"
+}
