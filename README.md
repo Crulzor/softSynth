@@ -26,13 +26,17 @@ cmake --preset Debug
 cmake --build build/Debug
 ```
 
-Output: `build/Debug/softSynth.elf` (+ `.hex`/`.bin` if you run objcopy).
+Output: `build/Debug/softSynth.elf`.
 
 ## Flash
 
 ```sh
-STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/softSynth.hex -v -rst
+STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/softSynth.elf -v -rst
 ```
+
+After flashing: the LCD shows the title + status text, and a 440 Hz test tone
+plays out of the headphone jack (the on-screen line is green on success, red if
+the codec didn't answer on I²C).
 
 ## Manual changes on top of the raw CubeMX output
 
@@ -48,8 +52,18 @@ CubeMX — re-apply them):
    a ~9.6 MHz pixel clock (template default produced an unusable ~75 MHz).
 3. **`App/display.cpp`** — LTDC configured with correct RK043FN48H timings; the
    panel control lines (PD7 DISP, PB12 RST, PK0 backlight) are driven, which the
-   template leaves as inputs/in-reset. The whole screen shows the LTDC
-   background colour (no framebuffer/SDRAM needed yet).
+   template leaves as inputs/in-reset. Drives a single RGB565 layer over a
+   framebuffer in AXI-SRAM (`.framebuffer` linker section).
 
-To change the colour, edit the `display::init(...)` argument in `App/app.cpp`
-(e.g. `display::colors::Red`).
+Note: the **audio path is *not* on this list** — `audio_out`/`codec` are new
+files under `App/platform/`, plus a `.dma_buffer` section in the linker script,
+none of which CubeMX overwrites. Only `Src/`, `Inc/`, the `.ioc`, and the
+linker script are regenerated, so re-apply the three changes above (and the
+`.dma_buffer` section) after any CubeMX regenerate.
+
+## Code style
+
+C/C++ follows a `.clang-format` at the repo root: **Allman braces, tab
+indentation, no space before control-statement parens** (`if(cond)`). The
+vendored ST driver in `App/platform/wm8994/` is excluded (`DisableFormat`).
+Run `clang-format -i` (or format-on-save) to keep files in style.
