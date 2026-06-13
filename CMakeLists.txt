@@ -51,11 +51,20 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # User application (C++)
     App/app.cpp
     App/display.cpp
+
+    # Platform drivers
+    App/platform/audio_out.cpp
+    App/platform/codec.cpp
+
+    # Vendored ST WM8994 codec driver (C)
+    App/platform/wm8994/wm8994.c
+    App/platform/wm8994/wm8994_reg.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     App
+    App/platform
 )
 
 # Add project symbols (macros)

@@ -253,6 +253,17 @@ SECTIONS
     . = ALIGN(4);
   } >RAM
 
+  /* SAI audio DMA buffer in RAM_D2 (0x30000000). The DMA engines live in the
+   * D2 domain and cannot reach DTCM; D2 RAM is the canonical home for their
+   * buffers. NOLOAD: filled at runtime by the audio render callback. */
+  .dma_buffer (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.dma_buffer)
+    *(.dma_buffer*)
+    . = ALIGN(4);
+  } >RAM_D2
+
   /* Remove information from the standard libraries */
   /DISCARD/ :
   {

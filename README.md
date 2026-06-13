@@ -3,12 +3,16 @@
 Softsynth firmware for the **STM32H750B-DK** Discovery board (STM32H750XBH6,
 Cortex-M7 @ up to 480 MHz, 4.3" 480×272 RK043FN48H LCD, WM8994 audio codec).
 
-Milestone 0: bring up the board and paint the LCD a solid colour.
+Milestones so far: paint the LCD, bitmap-font text, and a 440 Hz test tone out
+of the on-board WM8994 codec. See `ARCHITECTURE.md` for the design and roadmap.
 
 ## Layout
 
 - `App/` — application code (**C++17**). `display.*` brings up the LTDC panel;
   `app.cpp` is the entry point (`app_main()`), called from the generated `main()`.
+- `App/platform/` — hardware drivers: `audio_out.*` (SAI2 + DMA, accurate 48 kHz
+  PLL2 clock), `codec.*` (WM8994 over I²C4), and the vendored ST `wm8994/` driver.
+  I²C4 and SAI2 are configured by the app, not by the generated `MX_*_Init()`.
 - `Src/`, `Inc/`, `Drivers/` — STM32CubeMX-generated HAL + startup.
 - `softSynth.ioc` — CubeMX project (based on the STM32H750B-DK board template,
   "all peripherals" config, so SAI2/FMC/etc. are available for later).

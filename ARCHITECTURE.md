@@ -43,9 +43,9 @@ when reality forces a change, update this file.
 - **DMA can't reach DTCM**: the H7 DMA engines cannot access DTCMRAM. The SAI
   DMA buffer must live in `RAM_D2` (`0x30000000`). The LTDC framebuffer stays in
   AXI-SRAM (`0x24000000`, D1).
-- **Codec needs an I²C driver**: the on-board audio codec is controlled over
-  I²C, which is not yet configured in CubeMX. (Exact codec part to be confirmed
-  during bring-up.)
+- **Codec needs an I²C driver**: the on-board **WM8994** codec is controlled
+  over **I²C4** (PD12 = SCL, PD13 = SDA, AF4, 100 kHz, addr 0x34). I²C4 is not
+  in the `.ioc`, so the app brings it up itself (see `platform/codec.cpp`).
 
 ---
 
@@ -192,4 +192,9 @@ Because `dsp/` is HAL-free, a second build target compiles it for the desktop:
 ## 10. Status
 
 - ✅ LTDC bring-up, RGB565 framebuffer in AXI-SRAM, 8×8 bitmap-font text.
-- ⬜ Everything in §9.
+- ✅ **Audio path (§9.1)**: PLL2 → exact 48 kHz SAI clock, SAI2 Block A master
+  + MCLK, DMA2_Stream1 circular double-buffer in RAM_D2, WM8994 over I²C4. A
+  440 Hz test tone streams out via a per-half-buffer render callback. Modules:
+  `platform/audio_out.{hpp,cpp}`, `platform/codec.{hpp,cpp}`,
+  `platform/wm8994/` (vendored ST driver).
+- ⬜ §9.2 onward (dsp/ scaffold + host build, voices, filter, …).
