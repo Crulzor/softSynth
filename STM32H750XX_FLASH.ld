@@ -243,6 +243,16 @@ SECTIONS
 
 
 
+  /* LTDC framebuffer in AXI-SRAM. NOLOAD: not initialised by startup (the
+   * display code clears it), so it neither bloats the image nor slows boot. */
+  .framebuffer (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.framebuffer)
+    *(.framebuffer*)
+    . = ALIGN(4);
+  } >RAM
+
   /* Remove information from the standard libraries */
   /DISCARD/ :
   {
