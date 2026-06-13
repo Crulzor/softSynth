@@ -3,16 +3,24 @@
 Softsynth firmware for the **STM32H750B-DK** Discovery board (STM32H750XBH6,
 Cortex-M7 @ up to 480 MHz, 4.3" 480×272 RK043FN48H LCD, WM8994 audio codec).
 
-Milestones so far: paint the LCD, bitmap-font text, and a 440 Hz test tone out
-of the on-board WM8994 codec. See `ARCHITECTURE.md` for the design and roadmap.
+Milestones so far: paint the LCD, bitmap-font text, a 440 Hz test tone out of the
+on-board WM8994 codec, a host-tested PolyBLEP oscillator (`dsp/`), and an
+on-screen touch button that gates the tone. See `ARCHITECTURE.md` for the design
+and roadmap.
 
 ## Layout
 
 - `App/` — application code (**C++17**). `display.*` brings up the LTDC panel;
   `app.cpp` is the entry point (`app_main()`), called from the generated `main()`.
 - `App/platform/` — hardware drivers: `audio_out.*` (SAI2 + DMA, accurate 48 kHz
-  PLL2 clock), `codec.*` (WM8994 over I²C4), and the vendored ST `wm8994/` driver.
-  I²C4 and SAI2 are configured by the app, not by the generated `MX_*_Init()`.
+  PLL2 clock), `codec.*` (WM8994), `i2c4.*` (shared I²C4 bus used by the codec
+  and touch), `touch.*` (FT5336 capacitive touch, polled), and the vendored ST
+  `wm8994/` driver. I²C4 and SAI2 are configured by the app, not by the generated
+  `MX_*_Init()`.
+- `App/dsp/` — **pure, HAL-free DSP** (`dsp_config.hpp`, PolyBLEP `oscillator.*`).
+  Compiles into the firmware *and* on the desktop for unit tests.
+- `test/` — standalone host build (native gcc) for the DSP: doctest unit tests
+  plus `render_wav` to audition the sound on a PC. See **Host tests** below.
 - `Src/`, `Inc/`, `Drivers/` — STM32CubeMX-generated HAL + startup.
 - `softSynth.ioc` — CubeMX project (based on the STM32H750B-DK board template,
   "all peripherals" config, so SAI2/FMC/etc. are available for later).
@@ -28,15 +36,29 @@ cmake --build build/Debug
 
 Output: `build/Debug/softSynth.elf`.
 
+## Host tests
+
+The DSP core is HAL-free, so a separate native build runs its unit tests and
+renders audio to a `.wav` — no board required:
+
+```sh
+cmake -S test -B test/build
+cmake --build test/build
+ctest --test-dir test/build --output-on-failure   # oscillator tests
+./test/build/render_wav out.wav                   # audition the waveforms
+```
+
 ## Flash
 
 ```sh
 STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/softSynth.elf -v -rst
 ```
 
-After flashing: the LCD shows the title + status text, and a 440 Hz test tone
-plays out of the headphone jack (the on-screen line is green on success, red if
-the codec didn't answer on I²C).
+After flashing: the LCD shows the title + status text and an on-screen **HOLD =
+TONE** button. The audio path starts silent; hold the button to gate a 440 Hz
+test tone out of the headphone jack. A line at the bottom shows the live touch
+coordinates. Init failures are reported in red (audio if the codec doesn't
+answer on I²C, touch if the FT5336 doesn't).
 
 ## Manual changes on top of the raw CubeMX output
 
@@ -55,11 +77,12 @@ CubeMX — re-apply them):
    template leaves as inputs/in-reset. Drives a single RGB565 layer over a
    framebuffer in AXI-SRAM (`.framebuffer` linker section).
 
-Note: the **audio path is *not* on this list** — `audio_out`/`codec` are new
-files under `App/platform/`, plus a `.dma_buffer` section in the linker script,
-none of which CubeMX overwrites. Only `Src/`, `Inc/`, the `.ioc`, and the
-linker script are regenerated, so re-apply the three changes above (and the
-`.dma_buffer` section) after any CubeMX regenerate.
+Note: the **audio, touch and DSP code is *not* on this list** — everything under
+`App/platform/` (`audio_out`, `codec`, `i2c4`, `touch`, …) and `App/dsp/` are new
+files, plus a `.dma_buffer` section in the linker script, none of which CubeMX
+overwrites. Only `Src/`, `Inc/`, the `.ioc`, and the linker script are
+regenerated, so re-apply the three changes above (and the `.dma_buffer` section)
+after any CubeMX regenerate.
 
 ## Code style
 

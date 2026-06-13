@@ -11,8 +11,10 @@
     "clangd.path": "/usr/bin/clangd",
     "clangd.arguments": [
         // Let clangd query the arm-none-eabi compiler for its builtin/system
-        // include paths (needed for <cstdint>, intrinsics, etc.).
-        "--query-driver=/opt/stm32cubeclt/GNU-tools-for-STM32/bin/arm-none-eabi-*",
+        // include paths (needed for <cstdint>, intrinsics, etc.). The glob list
+        // must cover whatever path compile_commands.json actually invokes — the
+        // STM32CubeCLT copy in /opt AND the bundled toolchain under ~/.local.
+        "--query-driver=/opt/stm32cubeclt/GNU-tools-for-STM32/bin/arm-none-eabi-*,/home/crulzor/.local/share/stm32cube/bundles/gnu-tools-for-stm32/*/bin/arm-none-eabi-*",
         "--background-index",
         "--clang-tidy",
         "--header-insertion=never",

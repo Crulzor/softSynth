@@ -1,0 +1,6 @@
+# The host test build (native gcc) emits its own compile_commands.json. Point
+# clangd at it so the files under test/ — which pull in doctest and <fstream>,
+# things the firmware build never sees — resolve here instead of against the
+# cross build at ../build/Debug.
+CompileFlags:
+  CompilationDatabase: build

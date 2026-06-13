@@ -30,28 +30,34 @@ when reality forces a change, update this file.
 | Peripheral | Configuration | Role |
 |---|---|---|
 | **SAI2** | Block A master + MCLK (PI4–7) *(implemented)*; Block B sync slave (PG10) | Audio out to on-board codec; Block B = line/mic in (future) |
+| **I²C4** | PD12 SCL / PD13 SDA, ~100 kHz *(implemented)* | Shared control bus: WM8994 codec (0x34) + FT5336 touch (0x70) |
 | **ADC1/2/3** | one channel each (PA0, PC3, PF8 …) | Pots / CV inputs (0–3.3 V) |
 | **USB OTG FS** | device (PCD) | Future USB-MIDI input |
 | **SDMMC1 / QUADSPI** | SD card + QSPI flash | Wavetable / preset / sample storage (only 128 KB internal flash) |
 | **USART3** | ST-LINK VCP | Debug logging |
-| **LTDC** | RK043FN48H 480×272, PLL3 pixel clock | Display (already implemented) |
+| **LTDC** | RK043FN48H 480×272, PLL3 pixel clock *(implemented)* | Display |
+| **FT5336 touch** | I²C4 @ 0x70, INT on PG2 / EXTI2 *(implemented, polled)* | Capacitive touch on the panel |
 
 ### Hardware gotchas
 - **SAI clock accuracy** *(solved)*: the CubeMX default gave `ErrorAudioFreq =
-  -2.32 %` on SAI2 — an audible ~40-cent pitch error. `audio_out` now derives
-  the SAI kernel clock from **PLL2** (M=25, N=344, P=7 → 49.142 MHz → MCLK ≈
+  -2.32 %` on SAI2 — an audible ~40-cent pitch error. `audio_out` derives the
+  SAI kernel clock from **PLL2** (M=25, N=344, P=7 → 49.142 MHz → MCLK ≈
   12.288 MHz), ~0.02 % off exact 48 kHz. LTDC keeps PLL3, untouched.
 - **DMA can't reach DTCM** *(handled)*: the H7 DMA engines cannot access
   DTCMRAM. The SAI DMA buffer lives in `RAM_D2` (`0x30000000`) via the
   `.dma_buffer` linker section. The LTDC framebuffer stays in AXI-SRAM
   (`0x24000000`, D1).
-- **MCLK output bit**: on Rev.B+ silicon the SAI master clock only appears if
-  the MCKEN bit is set (`MckOutput = SAI_MCK_OUTPUT_ENABLE`); on Rev.Y it's
-  driven by the divider regardless. We set ENABLE so it works on both — the ST
-  BSP's DISABLE only happens to work because its board is Rev.Y.
-- **Codec needs an I²C driver**: the on-board **WM8994** codec is controlled
-  over **I²C4** (PD12 = SCL, PD13 = SDA, AF4, 100 kHz, addr 0x34). I²C4 is not
-  in the `.ioc`, so the app brings it up itself (see `platform/codec.cpp`).
+- **MCLK output bit** *(handled)*: on Rev.B+ silicon the SAI master clock only
+  appears if the MCKEN bit is set (`MckOutput = SAI_MCK_OUTPUT_ENABLE`); on
+  Rev.Y it is driven regardless. We force ENABLE so it works on both — the ST
+  BSP's DISABLE only happens to work because its reference board is Rev.Y.
+- **I²C4 is shared, not in the `.ioc`** *(handled)*: both the WM8994 codec and
+  the FT5336 touch controller hang off I²C4 (PD12/PD13). The app brings the bus
+  up itself via `platform/i2c4` (idempotent — whichever driver inits first wins;
+  the other no-ops), since I²C4 is not configured in CubeMX.
+- **Touch axes are swapped** *(handled)*: the FT5336 reports in its own portrait
+  frame; `touch::read()` swaps to framebuffer space (display.x = raw_y,
+  display.y = raw_x — pure swap, no mirror, verified on hardware).
 
 ---
 
@@ -118,40 +124,47 @@ etc.).
 
 ## 6. Components & folder structure
 
+A `✓` marks what exists today; unmarked entries are planned.
+
 ```
 App/
-  app.cpp                  // entry; wires the 3 rates together
+  app.cpp                  // ✓ entry; for now: debug touch-gated test tone
+  display.{hpp,cpp}        // ✓ framebuffer + text (lives at App/ root)
+  font8x8.hpp              // ✓ 8x8 bitmap font
 
   platform/                // HAL-dependent (hardware)
-    display.{hpp,cpp}      // framebuffer + text  (implemented; to be moved here)
-    font8x8.hpp            // 8x8 bitmap font     (implemented)
-    audio_out.{hpp,cpp}    // SAI2 + DMA double-buffer → engine.render()
-    codec.{hpp,cpp}        // on-board codec init/control over I²C
-    controls.{hpp,cpp}     // ADC pots/CV (DMA) + button/encoder debounce + edges
+    audio_out.{hpp,cpp}    // ✓ SAI2 + DMA double-buffer → render callback
+    codec.{hpp,cpp}        // ✓ WM8994 init/control (over i2c4)
+    i2c4.{hpp,cpp}         // ✓ shared I²C4 bus (codec + touch)
+    touch.{hpp,cpp}        // ✓ FT5336 capacitive touch (polled)
+    wm8994/                // ✓ vendored ST WM8994 driver
+    controls.{hpp,cpp}     //   ADC pots/CV (DMA) + button/encoder debounce
 
   dsp/                     // PURE — no HAL, compiles on desktop
-    dsp_config.hpp         // sample rate, block size, float typedefs
-    oscillator.{hpp,cpp}   // band-limited (PolyBLEP) saw/square/tri/sine
-    filter.{hpp,cpp}       // resonant state-variable or ladder filter
-    envelope.{hpp,cpp}     // ADSR
-    lfo.{hpp,cpp}          // modulation source
-    voice.{hpp,cpp}        // one note: osc(s) + filter + amp env + filter env
-    voice_manager.{hpp,cpp}// 8-voice allocation + stealing (oldest/quietest)
-    engine.{hpp,cpp}       // note_on/off/gate API; render(block); mix
-    mixer.{hpp,cpp}        // sum voices, master gain, (later) FX
+    dsp_config.hpp         // ✓ sample rate, block size, float typedefs
+    oscillator.{hpp,cpp}   // ✓ band-limited (PolyBLEP) saw/square/tri/sine
+    envelope.{hpp,cpp}     //   ADSR
+    filter.{hpp,cpp}       //   resonant state-variable or ladder filter
+    lfo.{hpp,cpp}          //   modulation source
+    voice.{hpp,cpp}        //   one note: osc(s) + filter + amp env + filter env
+    voice_manager.{hpp,cpp}//   8-voice allocation + stealing (oldest/quietest)
+    engine.{hpp,cpp}       //   note_on/off/gate API; render(block); mix
+    mixer.{hpp,cpp}        //   sum voices, master gain, (later) FX
 
   params/
-    parameters.{hpp,cpp}   // shared control↔audio parameter set
-    smoothing.hpp          // one-pole smoother (de-zipper)
+    parameters.{hpp,cpp}   //   shared control↔audio parameter set
+    smoothing.hpp          //   one-pole smoother (de-zipper)
 
   ui/
-    ui.{hpp,cpp}           // screen routing
-    widgets.{hpp,cpp}      // knob / value / meter draw helpers
+    ui.{hpp,cpp}           //   screen routing
+    widgets.{hpp,cpp}      //   knob / value / meter draw helpers
 
-test/                      // host build (native gcc, no MCU)
-  CMakeLists.txt
-  test_oscillator.cpp, test_envelope.cpp, ...
-  render_wav.cpp           // render the engine to a .wav to audition on a PC
+test/                      // ✓ host build (native gcc, no MCU) — standalone
+  CMakeLists.txt           // ✓ pulls doctest via FetchContent
+  test_main.cpp            // ✓ doctest entry point
+  test_oscillator.cpp      // ✓ pitch / level / anti-alias asserts
+  wav_writer.hpp           // ✓ 16-bit PCM WAV writer (host-only)
+  render_wav.cpp           // ✓ render the DSP to a .wav to audition on a PC
 ```
 
 ---
@@ -170,117 +183,54 @@ test/                      // host build (native gcc, no MCU)
 
 ## 8. Host-test workflow
 
-Because `dsp/` is HAL-free, a second build target compiles it for the desktop:
+Because `dsp/` is HAL-free, a separate **standalone** CMake project under
+`test/` compiles it for the desktop (native gcc, never the ARM toolchain):
 
-- A native CMake preset builds `dsp/` + `test/` with system gcc.
-- A small framework (candidate: **doctest** — single header, fast) asserts on
-  oscillator frequency, envelope timing, filter response, and voice-stealing.
-- `render_wav` runs the engine for a few seconds and writes a `.wav`, so DSP
-  changes can be *heard* on a PC before flashing. For a synth, audible
-  regression testing is invaluable.
+```sh
+cmake -S test -B test/build && cmake --build test/build
+ctest --test-dir test/build --output-on-failure
+./test/build/render_wav out.wav
+```
+
+- **doctest** (single header, fetched via FetchContent) asserts on oscillator
+  frequency, level and aliasing today; envelope timing, filter response and
+  voice-stealing as those land.
+- `render_wav` runs the DSP for a few seconds and writes a `.wav`, so changes
+  can be *heard* on a PC before flashing. For a synth, audible regression
+  testing is invaluable.
+- The same `dsp/` `.cpp` files are also compiled into the firmware, so they are
+  built by both toolchains.
 
 ---
 
 ## 9. Build order / milestones
 
-1. **Audio path** — accurate SAI2 clock (PLL2 → exact 48 kHz), codec init, a
+1. ✅ **Audio path** — accurate SAI2 clock (PLL2 → exact 48 kHz), codec init, a
    test tone streaming via SAI2 + DMA double-buffer. *(Highest-risk; do first.)*
-2. **`dsp/` scaffold + host build** — `dsp_config`, one PolyBLEP oscillator, a
-   passing desktop test, and `render_wav`. *(Do alongside #1.)*
+2. ✅ **`dsp/` scaffold + host build** — `dsp_config`, one PolyBLEP oscillator, a
+   passing desktop test, and `render_wav`.
 3. **One voice** — oscillator → ADSR amp → mixer, hardcoded note on hardware.
 4. **Filter + filter envelope + LFO.**
 5. **8-voice manager + button-driven gates.**
 6. **Controls → parameters** (pots as CV-style controls, smoothed).
 7. **UI** — live parameter display on the panel.
 
+(Touch input + an on-screen debug button landed alongside #2 to drive gates by
+hand; see §10.)
+
 ---
 
 ## 10. Status
 
-- ✅ LTDC bring-up, RGB565 framebuffer in AXI-SRAM, 8×8 bitmap-font text.
-- ✅ **Audio path (§9.1)**: PLL2 → exact 48 kHz SAI clock, SAI2 Block A master
-  + MCLK, DMA2_Stream1 circular double-buffer in RAM_D2, WM8994 over I²C4. A
-  440 Hz test tone streams out via a per-half-buffer render callback. Modules:
-  `platform/audio_out.{hpp,cpp}`, `platform/codec.{hpp,cpp}`,
-  `platform/wm8994/` (vendored ST driver).
-- ⬜ §9.2 onward (dsp/ scaffold + host build, voices, filter, …).
-
----
-
-## 11. Audio path — how it actually flows (as built)
-
-This section documents the implemented output path end-to-end, since it's the
-foundation everything else streams into.
-
-### 11.1 The two clocks involved
-
-Two separate clocks have to be right, and they come from different places:
-
-- **MCLK (master clock)** — the codec's reference, ~12.288 MHz (= 256 × 48 kHz).
-  Generated by the SAI from its kernel clock, output on **PI4**. Without a clean
-  MCLK the codec can't lock and you get silence or noise.
-- **The sample-rate / frame clocks** — `FS` (word/frame select, ~48 kHz, the
-  L/R boundary) and `SCK` (bit clock). The SAI derives these from MCLK via the
-  frame/slot config (128-bit frame, 4 × 16-bit slots).
-
-The chain that produces them:
-
-```
-HSE 25 MHz ─► PLL2 (M=25 → 1 MHz, N=344 → 344 MHz VCO, P=7) ─► 49.142 MHz
-            └─ SAI2 kernel clock
-49.142 MHz ─► SAI master divider (÷4, chosen by HAL) ─► MCLK ≈ 12.288 MHz (PI4)
-MCLK ─► (codec's internal PLL) and ─► SAI frame logic ─► FS/SCK ─► 48 kHz frames
-```
-
-`audio_out::clock_config()` sets PLL2; `HAL_SAI_Init` + `__HAL_SAI_ENABLE`
-start MCLK. LTDC's pixel clock is a *different* PLL (PLL3) and is left alone.
-
-### 11.2 Sample flow (the steady state)
-
-```
- g_buffer[] in RAM_D2  ──DMA2_Stream1 (circular)──►  SAI2_Block_A FIFO  ──►  PI4-7 ──► WM8994 ──► headphone jack
-   ▲   ▲                                                     │
-   │   │  half-transfer IRQ ────────► HAL_SAI_TxHalfCpltCallback ─┐
-   │   └────────────────────────────────────────────────────────┤
-   │      transfer-complete IRQ ───► HAL_SAI_TxCpltCallback  ─────┤
-   └──────────────── render_tone(out, frames) ◄──────────────────┘
-```
-
-- `g_buffer` is **one buffer split into two halves** of `kBlockSize` (64) stereo
-  frames. The DMA runs in **circular** mode, so it never stops — it loops over
-  the whole buffer forever.
-- While the DMA reads half A and sends it to the SAI, the CPU is free to refill
-  half B, and vice-versa. The two interrupts mark the hand-off points:
-  - **half-transfer** (`TxHalfCplt`): DMA just finished half A, now reading half
-    B → we refill **half A**.
-  - **transfer-complete** (`TxCplt`): DMA wrapped past half B → we refill
-    **half B**.
-- Each callback calls `g_render(out, 64)` — currently `render_tone`, later
-  `engine.render`. This is the **audio-rate** boundary from §3: it runs in ISR
-  context, must not block or allocate.
-- One block = 64 frames / 48 kHz ≈ **1.33 ms** of headroom to compute the next
-  block. That's the real-time budget the DSP has to fit inside.
-
-### 11.3 Bring-up order (why it's this order)
-
-`app_main()` does, in sequence:
-
-1. `audio_out::init()` — PLL2, SAI2 GPIO, DMA, `HAL_SAI_Init`, enable SAI.
-   **MCLK is now running on PI4.**
-2. `codec::init()` — I²C4 up, probe WM8994 (read ID `0x8994`), then configure
-   its registers. *This must come after step 1*: the codec samples MCLK during
-   init to set up its own clocking.
-3. `codec::play()` — un-mute the output path.
-4. `audio_out::start(render_tone)` — prime the buffer and kick off the circular
-   DMA. Samples start flowing.
-
-If the I²C probe fails (codec doesn't ACK), `init()` returns false and the LCD
-shows the red "Audio init FAILED" line instead of streaming.
-
-### 11.4 Two control buses, don't confuse them
-
-- **SAI (PI4–7)** carries the *audio samples* — MCLK, SCK, FS, SD. High speed,
-  continuous, DMA-fed.
-- **I²C4 (PD12/PD13)** is the *control* bus — a handful of register writes at
-  boot to power up the codec, route DAC→headphone, and set volume. It is **not**
-  in the audio path; after init it's idle until you change volume.
+- ✅ **Display** — LTDC bring-up, RGB565 framebuffer in AXI-SRAM, 8×8 bitmap text.
+- ✅ **Audio path (§9.1)** — PLL2 → 48 kHz SAI clock, SAI2 Block A master + MCLK,
+  DMA2_Stream1 circular double-buffer in `RAM_D2`, WM8994 over I²C4. A 440 Hz
+  test tone streams via a per-half-buffer render callback.
+  (`platform/audio_out`, `platform/codec`, `platform/i2c4`, `platform/wm8994/`.)
+- ✅ **DSP core (§9.2)** — pure `dsp/` (`dsp_config` + PolyBLEP `oscillator`),
+  host-built and unit-tested under `test/`, auditionable via `render_wav`.
+- ✅ **Touch + debug button** — FT5336 over I²C4 (`platform/touch`), polled at
+  ~50 Hz. `app.cpp` draws an on-screen button; touching it raises a gate
+  (`volatile bool`, read in the SAI ISR) that switches the test tone on/off — a
+  hand-driven stand-in for the real `note_on`/`note_off` until the engine lands.
+- ⬜ §9.3 onward (voice, filter, LFO, 8-voice manager, params, UI).

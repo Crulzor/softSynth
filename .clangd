@@ -1,15 +1,6 @@
-# clangd language-server configuration for this project.
-#
-# clangd reads the real per-file compile flags from the CMake-generated
-# compilation database. The Debug preset writes it to build/Debug/.
-# (Run `cmake --preset Debug` at least once so this file exists.)
-#
-# The cross-compiler's own system headers are discovered via the
-# --query-driver argument passed to clangd in .vscode/settings.json.
 CompileFlags:
   CompilationDatabase: build/Debug
   Remove:
-    # GCC-only flags clang doesn't understand (avoids spurious diagnostics).
-    - -fstack-usage
-    - -fcyclomatic-complexity
-    - --specs=*
+    - '-fstack-usage'
+    - '-fcyclomatic-complexity'
+    - '--specs=*'
