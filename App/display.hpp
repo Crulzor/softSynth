@@ -14,15 +14,18 @@
 
 #include <cstdint>
 
-namespace display {
+namespace display
+{
 
-struct Color {
-  std::uint8_t r;
-  std::uint8_t g;
-  std::uint8_t b;
+struct Color
+{
+	std::uint8_t r;
+	std::uint8_t g;
+	std::uint8_t b;
 };
 
-namespace colors {
+namespace colors
+{
 inline constexpr Color Black{0, 0, 0};
 inline constexpr Color Red{255, 0, 0};
 inline constexpr Color Green{0, 255, 0};
