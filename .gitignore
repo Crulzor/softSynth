@@ -1,0 +1,9 @@
+/build/
+*.o
+*.obj
+*.map
+*.elf
+*.bin
+*.hex
+*.list
+.mxproject
