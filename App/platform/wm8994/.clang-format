@@ -1,0 +1,3 @@
+# Vendored ST WM8994 driver — keep upstream formatting untouched.
+DisableFormat: true
+SortIncludes: false

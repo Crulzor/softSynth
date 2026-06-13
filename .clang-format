@@ -1,0 +1,23 @@
+# C/C++ formatting for softSynth. House style: Allman braces, tab indentation.
+# (The vendored ST driver under App/platform/wm8994 is excluded via its own
+# .clang-format with DisableFormat.)
+Language: Cpp
+BasedOnStyle: Google
+
+# Opening brace on its own line, for functions and control blocks alike.
+BreakBeforeBraces: Allman
+
+# Tabs for indentation (one per level); spaces for any continuation alignment,
+# so the layout holds no matter what tab width the editor shows.
+UseTab: ForIndentation
+IndentWidth: 4
+TabWidth: 4
+
+# Don't indent namespace bodies (keeps nested namespaces from eating tab-stops).
+NamespaceIndentation: None
+
+# No space between a control keyword and its paren: if(cond), for(...).
+SpaceBeforeParens: Never
+
+ColumnLimit: 80
+PointerAlignment: Left

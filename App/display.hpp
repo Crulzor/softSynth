@@ -51,9 +51,9 @@ void put_pixel(int x, int y, Color c);
 void fill_rect(int x, int y, int w, int h, Color c);
 
 // Draw a NUL-terminated string with its top-left corner at (x, y).
-// Each glyph is 8x8 px multiplied by `scale` (scale=1 -> 8x8, scale=3 -> 24x24).
-// Only the glyph (foreground) pixels are written; the background shows through.
-// Returns the x coordinate just past the last glyph (for chaining).
+// Each glyph is 8x8 px multiplied by `scale` (scale=1 -> 8x8, scale=3 ->
+// 24x24). Only the glyph (foreground) pixels are written; the background shows
+// through. Returns the x coordinate just past the last glyph (for chaining).
 int draw_text(int x, int y, const char* s, Color fg, int scale = 1);
 
 }  // namespace display

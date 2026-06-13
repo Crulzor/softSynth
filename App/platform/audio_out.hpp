@@ -10,7 +10,8 @@
 
 #include <cstdint>
 
-namespace audio_out {
+namespace audio_out
+{
 
 inline constexpr uint32_t kSampleRate = 48000;  // Hz
 inline constexpr uint32_t kBlockSize = 64;      // stereo frames per render call

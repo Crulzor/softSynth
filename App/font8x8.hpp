@@ -9,7 +9,8 @@
 
 #include <cstdint>
 
-namespace display::font {
+namespace display::font
+{
 
 inline constexpr int kGlyphW = 8;
 inline constexpr int kGlyphH = 8;

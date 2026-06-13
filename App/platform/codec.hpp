@@ -8,7 +8,8 @@
 
 #include <cstdint>
 
-namespace codec {
+namespace codec
+{
 
 // Probe + initialise the WM8994 for output at `sample_rate` Hz, 16-bit stereo,
 // routed to the headphone jack. Requires the SAI MCLK to already be running.
