@@ -8,6 +8,7 @@
 #   cmake --build test/build
 #   ctest --test-dir test/build --output-on-failure   # run unit tests
 #   ./test/build/render_wav softsynth.wav             # audition on the desktop
+#   ./test/build/render_ui ui                         # screenshot the UI pages
 cmake_minimum_required(VERSION 3.22)
 project(softsynth_dsp_tests CXX)
 
@@ -26,9 +27,23 @@ set(APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../App)
 # Pure DSP sources, shared by the firmware and by these host tools.
 add_library(dsp STATIC
     ${APP_DIR}/dsp/oscillator.cpp
+    ${APP_DIR}/sequencer/sequencer.cpp
 )
 target_include_directories(dsp PUBLIC ${APP_DIR})
 target_compile_options(dsp PRIVATE -Wall -Wextra)
+
+# UI + parameter model + the HAL-free half of the display driver, drawing into
+# a stand-in framebuffer (host_framebuffer.cpp) instead of the LTDC one.
+add_library(ui STATIC
+    ${APP_DIR}/display_draw.cpp
+    ${APP_DIR}/params/parameters.cpp
+    ${APP_DIR}/ui/widgets.cpp
+    ${APP_DIR}/ui/debug_page.cpp
+    ${APP_DIR}/ui/ui.cpp
+    host_framebuffer.cpp
+)
+target_include_directories(ui PUBLIC ${APP_DIR})
+target_compile_options(ui PRIVATE -Wall -Wextra)
 
 # --- doctest (single-header unit test framework) ----------------------------
 # doctest 2.4.11's CMakeLists declares a pre-3.5 minimum, which CMake 4 rejects;
@@ -47,8 +62,11 @@ enable_testing()
 add_executable(dsp_tests
     test_main.cpp
     test_oscillator.cpp
+    test_parameters.cpp
+    test_sequencer.cpp
+    test_ui.cpp
 )
-target_link_libraries(dsp_tests PRIVATE dsp doctest::doctest)
+target_link_libraries(dsp_tests PRIVATE dsp ui doctest::doctest)
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 doctest_discover_tests(dsp_tests)
@@ -56,3 +74,7 @@ doctest_discover_tests(dsp_tests)
 # --- .wav auditioning tool --------------------------------------------------
 add_executable(render_wav render_wav.cpp)
 target_link_libraries(render_wav PRIVATE dsp)
+
+# --- UI screenshot tool -----------------------------------------------------
+add_executable(render_ui render_ui.cpp)
+target_link_libraries(render_ui PRIVATE ui dsp)

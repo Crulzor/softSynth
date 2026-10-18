@@ -10,10 +10,16 @@ namespace
 {
 
 // TIMINGR for ~100 kHz standard mode from a 64 MHz kernel clock
-// (I2C4SEL = rcc_pclk4 = 64 MHz): PRESC=9, SCLDEL=4, SDADEL=2, SCLH=0x1B,
-// SCLL=0x1F. Both the WM8994 and the FT5336 are happy up to 400 kHz, so the
-// exact value is not critical.
+// (I2C4SEL = HSI = 64 MHz, pinned by sysclock::init()): PRESC=9, SCLDEL=4,
+// SDADEL=2, SCLH=0x1B, SCLL=0x1F. Both the WM8994 and the FT5336 are happy up
+// to 400 kHz, so the exact value is not critical.
 constexpr uint32_t kTiming = 0x90421B1F;
+
+// Per-transfer timeout. Our transfers are a few bytes (<1 ms at 100 kHz), so
+// this only matters when a device stops answering - and then it bounds how
+// long the foreground loop (touch poll, UI) stalls per call. The HAL's usual
+// 1000 ms froze the UI for a second per frame on a wedged touch controller.
+constexpr uint32_t kTimeoutMs = 10;
 
 I2C_HandleTypeDef g_i2c4{};
 
@@ -67,14 +73,15 @@ bool read(uint16_t dev_addr, uint16_t reg, uint16_t reg_size, uint8_t* data,
           uint16_t len)
 {
 	return HAL_I2C_Mem_Read(&g_i2c4, dev_addr, reg, reg_addr_size(reg_size),
-	                        data, len, 1000) == HAL_OK;
+	                        data, len, kTimeoutMs) == HAL_OK;
 }
 
 bool write(uint16_t dev_addr, uint16_t reg, uint16_t reg_size,
            const uint8_t* data, uint16_t len)
 {
 	return HAL_I2C_Mem_Write(&g_i2c4, dev_addr, reg, reg_addr_size(reg_size),
-	                         const_cast<uint8_t*>(data), len, 1000) == HAL_OK;
+	                         const_cast<uint8_t*>(data), len,
+	                         kTimeoutMs) == HAL_OK;
 }
 
 }  // namespace i2c4

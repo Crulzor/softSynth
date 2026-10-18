@@ -52,13 +52,21 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/app.cpp
     App/display.cpp
 
-    # Pure DSP core (HAL-free; also host-built + unit-tested under test/)
+    # HAL-free, also host-built + unit-tested under test/
+    App/display_draw.cpp
     App/dsp/oscillator.cpp
+    App/params/parameters.cpp
+    App/sequencer/sequencer.cpp
+    App/ui/widgets.cpp
+    App/ui/debug_page.cpp
+    App/ui/ui.cpp
 
     # Platform drivers
     App/platform/audio_out.cpp
     App/platform/codec.cpp
+    App/platform/cpu_load.cpp
     App/platform/i2c4.cpp
+    App/platform/sysclock.cpp
     App/platform/touch.cpp
 
     # Vendored ST WM8994 codec driver (C)
