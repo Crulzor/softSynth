@@ -25,13 +25,10 @@ inline bool write(const std::string& path, const std::vector<float>& samples,
 		return false;
 	}
 
-	const std::uint32_t data_bytes =
-	    static_cast<std::uint32_t>(samples.size()) * sizeof(std::int16_t);
+	const std::uint32_t data_bytes = static_cast<std::uint32_t>(samples.size()) * sizeof(std::int16_t);
 	const std::uint16_t bits = 16;
-	const std::uint16_t block_align =
-	    static_cast<std::uint16_t>(channels * bits / 8);
-	const std::uint32_t byte_rate =
-	    static_cast<std::uint32_t>(sample_rate) * block_align;
+	const std::uint16_t block_align = static_cast<std::uint16_t>(channels * bits / 8);
+	const std::uint32_t byte_rate = static_cast<std::uint32_t>(sample_rate) * block_align;
 
 	auto put32 = [&f](std::uint32_t v) { f.write(reinterpret_cast<char*>(&v), 4); };
 	auto put16 = [&f](std::uint16_t v) { f.write(reinterpret_cast<char*>(&v), 2); };

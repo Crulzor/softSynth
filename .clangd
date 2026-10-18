@@ -1,6 +1,6 @@
 CompileFlags:
   CompilationDatabase: build/Debug
   Remove:
-    - '-fstack-usage'
-    - '-fcyclomatic-complexity'
-    - '--specs=*'
+    - -fstack-usage
+    - -fcyclomatic-complexity
+    - --specs=*
