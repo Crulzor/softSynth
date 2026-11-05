@@ -15,9 +15,12 @@
 // pots/CV land they are read inside the audio ISR and become *modulation* on
 // top of these values (Mutable-style patch + modulations), not a second writer.
 //
-// The list below is a first draft sized for the debug page. Add, rename or
-// re-range entries freely as the oscillator / envelope / LFO code lands; the
-// UI only refers to parameters by Id and reads everything else from the Spec.
+// The list below is a first draft sized for the multi-page UI. Add, rename or
+// re-range entries freely as the oscillator / envelope / filter / LFO code
+// lands; the UI only refers to parameters by Id and reads everything else
+// from the Spec. Modulation routing (which LFO drives what, by how much) does
+// not live here: it is modulation::Matrix, a plain data set the same way this
+// one is.
 #pragma once
 
 #include <cstdint>
@@ -37,13 +40,14 @@ enum class Id : std::uint8_t
 
 	EnvAttack,
 	EnvDecay,
+	EnvSustain,
+	EnvRelease,
 
 	Lfo1Rate,
-	Lfo1Dest,
-	Lfo1Amount,
 	Lfo2Rate,
-	Lfo2Dest,
-	Lfo2Amount,
+
+	FilterCutoff,
+	FilterResonance,
 
 	Tempo,  // sequencer BPM
 
@@ -51,19 +55,6 @@ enum class Id : std::uint8_t
 };
 
 inline constexpr int kCount = static_cast<int>(Id::Count);
-
-// LFO destinations, stored in the *Dest parameters as a whole-number float.
-enum class LfoDest : std::uint8_t
-{
-	Off,
-	Pitch,
-	Shape,
-	Mix,
-	Amp,
-	Cutoff,  // filter not built yet; listed so the UI can already offer it
-
-	Count
-};
 
 // How a value is shown on screen. Storage is always the natural value.
 enum class Format : std::uint8_t

@@ -59,6 +59,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/sequencer/sequencer.cpp
     App/ui/widgets.cpp
     App/ui/debug_page.cpp
+    App/ui/env_page.cpp
+    App/ui/mod_page.cpp
+    App/ui/osc_page.cpp
+    App/ui/seq_page.cpp
     App/ui/ui.cpp
 
     # Platform drivers

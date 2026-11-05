@@ -16,6 +16,7 @@
 #include <cstdint>
 
 #include "display.hpp"
+#include "modulation/matrix.hpp"
 #include "params/parameters.hpp"
 #include "platform/audio_out.hpp"
 #include "platform/codec.hpp"
@@ -38,10 +39,11 @@ constexpr uint32_t kUiFrameMs = 20;   // ~50 Hz touch poll + redraw
 constexpr uint32_t kLoadFrames = 25;  // CPU read-out window: ~0.5 s
 
 params::Parameters g_params;
+modulation::Matrix g_matrix;
 sequencer::Pattern g_pattern;
 sequencer::Transport g_transport;
 sequencer::Sequencer g_sequencer(static_cast<float>(audio_out::kSampleRate));
-ui::Ui g_ui(g_params, g_pattern, g_transport);
+ui::Ui g_ui(g_params, g_pattern, g_transport, g_matrix);
 
 // DMA half-buffer callback, ISR context: render `frames` interleaved stereo
 // frames into `out`. The per-block work goes here: controls -> sequencer clock
@@ -111,7 +113,16 @@ extern "C" void app_main()
 		audio_out::start(&audio_callback);
 	}
 
+	// Prime the ping-pong: one complete frame in each buffer before the
+	// swap is armed. The UI only draws invalidated widgets, so each buffer
+	// needs a full redraw_all() + update() pair, not just a clear.
 	g_ui.redraw_all();
+	g_ui.update(ui::Touch{false, 0, 0}, HAL_GetTick());
+	display::swap_buffers();
+	g_ui.redraw_all();
+	g_ui.update(ui::Touch{false, 0, 0}, HAL_GetTick());
+	display::enable_swap_irq();
+
 	g_ui.set_status(init_status(clock_ok, audio_ok, touch_ok));
 	g_ui.set_cpu_mhz(static_cast<int>(sysclock::cpu_hz() / 1000000));
 
@@ -124,7 +135,9 @@ extern "C" void app_main()
 		}
 
 		const touch::Point p = touch::read();
+		display::begin_draw();
 		g_ui.update(ui::Touch{p.pressed, p.x, p.y}, HAL_GetTick());
+		display::end_draw();
 
 		HAL_GPIO_TogglePin(LD1_GPIO_Port, LD1_Pin);  // heartbeat
 		HAL_Delay(kUiFrameMs);

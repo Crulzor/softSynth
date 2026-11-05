@@ -11,11 +11,26 @@ namespace display
 
 namespace detail
 {
-// RGB565 framebuffer in internal AXI-SRAM. 480*272*2 = ~255 KB, which fits the
-// 512 KB AXI-SRAM. Placed by the linker in the .framebuffer (NOLOAD) section so
-// it doesn't bloat the image and isn't zeroed by startup; init() clears it.
-alignas(32) std::uint16_t g_framebuffer[kWidth * kHeight]
+// The double-buffered pair in internal AXI-SRAM: 2 x 480*272*2 = 510 KB in the
+// 512 KB. Placed by the linker in the .framebuffer (NOLOAD) section so they
+// don't bloat the image and aren't zeroed by startup; init() clears them.
+// g_back is what the CPU draws into, g_front what the LTDC scans out; the two
+// are exchanged at the start of every frame (line event), so the panel never
+// sees a half-drawn frame.
+alignas(32) std::uint16_t g_buf_a[kWidth * kHeight]
     __attribute__((section(".framebuffer")));
+alignas(32) std::uint16_t g_buf_b[kWidth * kHeight]
+    __attribute__((section(".framebuffer")));
+std::uint16_t* g_back = g_buf_a;
+std::uint16_t* g_front = g_buf_b;
+std::uint16_t* g_framebuffer = g_back;  // -> the back buffer (drawing target)
+// Set by the drawing calls once a frame has been drawn; the frame-swap
+// interrupt clears it when it flips, so an idle UI never re-flips an old
+// buffer to the front.
+volatile std::uint32_t g_dirty = 0;
+// Non-zero while begin_draw()/end_draw() wraps a foreground pass; the swap
+// defers to the next boundary rather than flipping a half-drawn frame.
+volatile std::uint32_t g_in_draw = 0;
 }  // namespace detail
 
 namespace
@@ -31,7 +46,7 @@ constexpr std::uint16_t kVfp = 2;
 
 LTDC_HandleTypeDef g_ltdc{};
 
-// Point LTDC layer 1 at the framebuffer, covering the whole panel.
+// Point LTDC layer 1 at the front buffer, covering the whole panel.
 void layer_init()
 {
 	LTDC_LayerCfgTypeDef cfg{};
@@ -44,7 +59,7 @@ void layer_init()
 	cfg.Alpha0 = 0;
 	cfg.BlendingFactor1 = LTDC_BLENDING_FACTOR1_CA;
 	cfg.BlendingFactor2 = LTDC_BLENDING_FACTOR2_CA;
-	cfg.FBStartAdress = reinterpret_cast<std::uint32_t>(detail::g_framebuffer);
+	cfg.FBStartAdress = reinterpret_cast<std::uint32_t>(detail::g_front);
 	cfg.ImageWidth = kWidth;
 	cfg.ImageHeight = kHeight;
 	cfg.Backcolor.Red = 0;
@@ -127,8 +142,108 @@ void init(Color background)
 {
 	panel_control_init();
 	ltdc_init(background);
-	layer_init();
+
+	// Both buffers start cleared; the LTDC scans g_front, the CPU draws into
+	// g_back.
+	detail::g_framebuffer = detail::g_front;
 	fill(background);
+	detail::g_framebuffer = detail::g_back;
+	fill(background);
+	layer_init();
+	// The fills above marked the buffers dirty and the drawn box as the whole
+	// screen; clear both so the first real flip doesn't copy a full frame
+	// that both buffers already share.
+	detail::g_dirty = 0;
+	detail::g_box_any = false;
+}
+
+void swap_buffers()
+{
+	std::uint16_t* back = detail::g_back;
+	std::uint16_t* front = detail::g_front;
+	detail::g_back = front;
+	detail::g_front = back;
+	detail::g_framebuffer = detail::g_back;
+
+	// Converge the buffers: the pixels drawn since the last promotion are now
+	// in the (new) front buffer; pull the drawn box out of it into the (new)
+	// back buffer so a one-shot widget change (a cycled label) lands in both
+	// and can't ghost while the tab bar keeps flipping the pair. No-op when
+	// the frame drew nothing. In the line-0 IRQ this runs during vertical
+	// blanking: the demoted back buffer is not being scanned, so the copy is
+	// invisible.
+	detail::flush_box();
+
+	// Shadow write + immediate reload: from the next line the panel reads the
+	// new front buffer. Both buffers always hold a complete frame (the UI is
+	// retained-mode), so the one boundary line that may still be scanned from
+	// the previous frame is indistinguishable.
+	LTDC_LAYER(&g_ltdc, LTDC_LAYER_1)->CFBAR =
+	    reinterpret_cast<std::uint32_t>(detail::g_front);
+	g_ltdc.Instance->SRCR |= LTDC_SRCR_IMR;
+}
+
+void enable_swap_irq()
+{
+	// Below the audio DMA stream (5): the swap costs a handful of register
+	// writes and must never delay an audio block.
+	HAL_NVIC_SetPriority(LTDC_IRQn, 6, 0);
+	HAL_NVIC_EnableIRQ(LTDC_IRQn);
+	g_ltdc.Instance->LIPCR = 0;
+	g_ltdc.Instance->IER |= LTDC_IT_LI;
+}
+
+void begin_draw()
+{
+	// Flag the pass before masking so a boundary event that races the start of
+	// the pass sees it and defers; then mask the frame-swap event so it can't
+	// land in the middle of a widget draw (at most one frame boundary is
+	// missed).
+	detail::g_in_draw = 1;
+	__HAL_LTDC_DISABLE_IT(&g_ltdc, LTDC_IT_LI);
+}
+
+void end_draw()
+{
+	// Drop the line event that may have pended while masked, so the next swap
+	// lands on a clean frame boundary.
+	if((g_ltdc.Instance->ISR & LTDC_ISR_LIF) != 0)
+	{
+		__HAL_LTDC_CLEAR_FLAG(&g_ltdc, LTDC_FLAG_LI);
+	}
+	HAL_LTDC_ProgramLineEvent(&g_ltdc, 0);
+	// The pass is done last: a boundary event fired by the re-arm above sees a
+	// complete frame.
+	detail::g_in_draw = 0;
+}
+
+// The LTDC IRQ vector and the HAL's weak line-event callback. They live in
+// this namespace to reach g_ltdc; the extern "C" gives them the names the
+// startup vector table and the HAL look up.
+extern "C"
+void LTDC_IRQHandler(void)
+{
+	HAL_LTDC_IRQHandler(&g_ltdc);
+}
+
+extern "C"
+void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef* hltdc)
+{
+	// Flip only when the foreground has drawn a new frame: until then the
+	// panel keeps scanning the last complete frame, so a retained-mode UI
+	// (which redraws only invalidated widgets) never alternates between a
+	// fresh buffer and a stale one. The in_draw check defers to the next
+	// boundary if a frame is still being drawn (the event raced begin_draw).
+	if(detail::g_dirty && !detail::g_in_draw)
+	{
+		detail::g_dirty = 0;
+		swap_buffers();
+	}
+	// The HAL masked and cleared the line interrupt before calling us; re-arm
+	// it for the next frame. Raw writes, not HAL calls: this runs in the IRQ
+	// itself, and the HAL's handle lock is not ISR-safe here.
+	hltdc->Instance->LIPCR = 0;
+	hltdc->Instance->IER |= LTDC_IT_LI;
 }
 
 }  // namespace display

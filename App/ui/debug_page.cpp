@@ -11,7 +11,7 @@ namespace
 
 using params::Id;
 
-// --- Layout (480 x 272) -----------------------------------------------------
+// --- Layout (480 x kPageH) ---------------------------------------------------
 // Left third: parameter cells in rows, a 3-letter row tag down the left edge.
 constexpr int kLeftW = 159;  // x = 159 is the separator line
 constexpr int kTagW = 11;    // row tag column
@@ -20,12 +20,12 @@ constexpr int kCellPitch = 37;
 constexpr int kHeaderH = 11;
 
 constexpr int kOscHeaderY = 0;
-constexpr int kOscRowY[2] = {12, 62};
-constexpr int kOscCellH = 49;
+constexpr int kOscRowY[2] = {12, 56};
+constexpr int kOscCellH = 44;
 
-constexpr int kModHeaderY = 112;
-constexpr int kModRowY[3] = {124, 173, 222};
-constexpr int kModCellH = 48;
+constexpr int kModHeaderY = 100;
+constexpr int kModRowY[3] = {112, 156, 200};
+constexpr int kModCellH = 44;
 
 constexpr Rect cell(int col, int y, int h)
 {
@@ -46,7 +46,7 @@ constexpr int kRightX = 160;
 constexpr Rect kNoteBox{kRightX + 2, 1, 124, 32};
 constexpr Rect kPlay{kRightX + 128, 1, 36, 32};
 constexpr Rect kTempo{kRightX + 166, 1, 152, 32};
-constexpr Rect kGrid{kRightX, 35, 320, 236};
+constexpr Rect kGrid{kRightX, 35, 320, 209};
 
 // Row tags, drawn as stacked letters.
 struct RowTag
@@ -114,33 +114,30 @@ void draw_row_tag(const RowTag& tag)
 
 }  // namespace
 
-DebugPage::DebugPage(params::Parameters& params, sequencer::Pattern& pattern,
-                     sequencer::Transport& transport)
+DebugPage::DebugPage(Ctx ctx)
     : knobs_{
-          Knob(osc(0, 0), params, Id::Osc1Pitch),
-          Knob(osc(1, 0), params, Id::Osc1Shape),
-          Knob(osc(2, 0), params, Id::Osc1Octave),
-          Knob(osc(0, 1), params, Id::Osc2Pitch),
-          Knob(osc(1, 1), params, Id::Osc2Shape),
-          Knob(osc(2, 1), params, Id::Osc2Octave),
-          Knob(mod(0, 0), params, Id::EnvAttack),
-          Knob(mod(1, 0), params, Id::EnvDecay),
-          Knob(mod(0, 1), params, Id::Lfo1Rate),
-          Knob(mod(1, 1), params, Id::Lfo1Dest),
-          Knob(mod(2, 1), params, Id::Lfo1Amount),
-          Knob(mod(0, 2), params, Id::Lfo2Rate),
-          Knob(mod(1, 2), params, Id::Lfo2Dest),
-          Knob(mod(2, 2), params, Id::Lfo2Amount),
+          Knob(osc(0, 0), ctx.params, Id::Osc1Pitch),
+          Knob(osc(1, 0), ctx.params, Id::Osc1Shape),
+          Knob(osc(2, 0), ctx.params, Id::Osc1Octave),
+          Knob(osc(0, 1), ctx.params, Id::Osc2Pitch),
+          Knob(osc(1, 1), ctx.params, Id::Osc2Shape),
+          Knob(osc(2, 1), ctx.params, Id::Osc2Octave),
+          Knob(mod(0, 0), ctx.params, Id::EnvAttack),
+          Knob(mod(1, 0), ctx.params, Id::EnvDecay),
+          Knob(mod(2, 0), ctx.params, Id::EnvSustain),
+          Knob(mod(3, 0), ctx.params, Id::EnvRelease),
+          Knob(mod(0, 1), ctx.params, Id::Lfo1Rate),
+          Knob(mod(0, 2), ctx.params, Id::Lfo2Rate),
       },
       // The mix column spans both oscillator rows.
       mix_(Rect{kTagW + 3 * kCellPitch, kOscRowY[0], kCellW,
-	            kOscRowY[1] + kOscCellH - kOscRowY[0]},
-	       params, Id::OscMix),
-      tempo_(kTempo, params, Id::Tempo),
-      play_(kPlay, transport),
-      grid_(kGrid, pattern, transport),
-      note_box_(kNoteBox, grid_, pattern),
-      picker_(kGrid, pattern)
+	        kOscRowY[1] + kOscCellH - kOscRowY[0]},
+	       ctx.params, Id::OscMix),
+      tempo_(kTempo, ctx.params, Id::Tempo),
+      play_(kPlay, ctx.transport),
+      grid_(kGrid, ctx.pattern, ctx.transport),
+      note_box_(kNoteBox, grid_, ctx.pattern),
+      picker_(kGrid, ctx.pattern)
 {
 	int n = 0;
 	for(Knob& k : knobs_)
@@ -163,12 +160,6 @@ void DebugPage::redraw_all()
 		w->invalidate();
 	}
 	picker_.invalidate();
-}
-
-void DebugPage::set_status(const char* text)
-{
-	status_ = text;
-	frame_dirty_ = true;
 }
 
 void DebugPage::set_cpu_mhz(int mhz)
@@ -194,11 +185,7 @@ void DebugPage::draw_frame()
 	draw_header(kOscHeaderY, "OSC");
 	draw_header(kModHeaderY, "MOD");
 	char text[24];
-	if(status_ != nullptr)
-	{
-		draw_header_note(kOscHeaderY, status_, theme::kWarn);
-	}
-	else if(cpu_mhz_ > 0)
+	if(cpu_mhz_ > 0)
 	{
 		put_str("MHz", format_int(cpu_mhz_, text));
 		draw_header_note(kOscHeaderY, text, theme::kDim);
@@ -216,7 +203,7 @@ void DebugPage::draw_frame()
 	{
 		draw_row_tag(tag);
 	}
-	display::fill_rect(kLeftW, 0, 1, display::kHeight, theme::kHeader);
+	display::fill_rect(kLeftW, 0, 1, kPageH, theme::kHeader);
 }
 
 Widget* DebugPage::hit(int x, int y)

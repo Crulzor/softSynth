@@ -87,7 +87,14 @@ CubeMX — re-apply them):
 3. **`App/display.cpp`** — LTDC configured with correct RK043FN48H timings; the
    panel control lines (PD7 DISP, PB12 RST, PK0 backlight) are driven, which the
    template leaves as inputs/in-reset. Drives a single RGB565 layer over a
-   framebuffer in AXI-SRAM (`.framebuffer` linker section).
+   double-buffered RGB565 pair in AXI-SRAM (`.framebuffer` linker section);
+   the CPU draws the back buffer and the LTDC line-0 interrupt swaps the
+   two when a new frame has been drawn (dirty flag set by the drawing
+   calls), so the panel never scans a half-drawn or a stale frame. Each swap
+   also copies the bounding box of the pixels drawn since the last
+   promotion into the demoted buffer (`detail::flush_box()`, tracked by
+   `display_draw.cpp`), so a one-shot widget change lands in both buffers
+   and can't ghost while anything else keeps the pair flipping.
 
 The CPU clock is **not** set in `main.c` either: the generated
 `SystemClock_Config()` leaves the core at 64 MHz, and `App/platform/sysclock`

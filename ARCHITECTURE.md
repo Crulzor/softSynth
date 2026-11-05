@@ -44,7 +44,7 @@ when reality forces a change, update this file.
 | **USB OTG FS** | device (PCD) | Future USB-MIDI input |
 | **SDMMC1 / QUADSPI** | SD card + QSPI flash | Wavetable / preset / sample storage (only 128 KB internal flash) |
 | **USART3** | ST-LINK VCP | Debug logging |
-| **LTDC** | RK043FN48H 480×272, PLL3 pixel clock *(implemented)* | Display |
+| **LTDC** | RK043FN48H 480×272, PLL3 pixel clock, double-buffered *(implemented)* | Display |
 | **FT5336 touch** | I²C4 @ 0x70, INT on PG2 / EXTI2 *(implemented, polled)* | Capacitive touch on the panel |
 
 ### Hardware gotchas
@@ -55,7 +55,8 @@ when reality forces a change, update this file.
 - **DMA can't reach DTCM** *(handled)*: the H7 DMA engines cannot access
   DTCMRAM. The SAI DMA buffer lives in `RAM_D2` (`0x30000000`) via the
   `.dma_buffer` linker section. The LTDC framebuffer stays in AXI-SRAM
-  (`0x24000000`, D1).
+  (`0x24000000`, D1) — the 512 KB `.framebuffer` section now holds the
+  double-buffered pair, 2 × 480×272×2 = 510 KB, which fills the section.
 - **MCLK output bit** *(handled)*: on Rev.B+ silicon the SAI master clock only
   appears if the MCKEN bit is set (`MckOutput = SAI_MCK_OUTPUT_ENABLE`); on
   Rev.Y it is driven regardless. We force ENABLE so it works on both — the ST
@@ -170,9 +171,9 @@ where no unit is decided yet); anything that thinks in 0..1 (touch knobs, pots,
 CV) goes through `set_normalized()`. The UI is the only writer and the audio
 interrupt the only reader; a float store is atomic on the M7, so no locks.
 
-The list is sized for the debug page and meant to change as the DSP lands: add
-or re-range entries in `parameters.cpp`; the UI only refers to parameters by
-`Id` and takes everything else from the `Spec`.
+The list is sized for the multi-page UI and meant to change as the DSP
+lands: add or re-range entries in `parameters.cpp`; the UI only refers to
+parameters by `Id` and takes everything else from the `Spec`.
 
 The step pattern (`sequencer::Pattern`: 16 × {on, MIDI note}) is plain data the
 UI edits and the sequencer clock (in the interrupt) reads. Tempo is a
@@ -181,6 +182,15 @@ parameter, not part of the pattern, so it can be modulated like anything else.
 Play/stop and the playhead cross the boundary through `sequencer::Transport`:
 the UI writes `run`, the interrupt writes `step` (−1 when stopped). One writer
 per field, one aligned word each.
+
+### The modulation matrix (`modulation/matrix.hpp`) *(implemented)*
+
+Six rows of `{source, destination, amount}`, the same plain-data model as the
+parameter set: the UI writes, the audio ISR reads. Sources are LFO1, LFO2,
+AmpEnv, Tempo; destinations are Pitch, Shape, Mix, Amp, Cutoff; `amount` is
+−1..1 with 0 = no modulation. It replaces the per-LFO `Dest`/`Amount`
+parameters; per-block the interrupt will fold each active row into the
+destination.
 
 ### The sequencer clock (`sequencer/sequencer`) *(implemented)*
 
@@ -258,15 +268,26 @@ App/
     parameters.{hpp,cpp}   // ✓ shared UI↔audio parameter set (draft list)
     smoothing.hpp          //   interpolator / one-pole smoother (de-zipper)
 
+  modulation/
+    matrix.hpp             // ✓ 6 rows of {source, destination, amount}; plain
+                           //   data: UI writes, audio ISR reads
+
   sequencer/
     pattern.hpp            // ✓ 16-step pattern data (on + note per step)
     sequencer.{hpp,cpp}    // ✓ clock + Transport, runs in the audio interrupt
 
   ui/
-    ui.{hpp,cpp}           // ✓ touch → press/drag/release, page routing
-    widgets.{hpp,cpp}      // ✓ knob, crossfader, slider, step grid, note box,
-                           //   note picker
-    debug_page.{hpp,cpp}   // ✓ the one-screen dev/debug page (§11)
+    page.hpp               // ✓ Page base + Ctx (model refs), page dimensions
+    ui.{hpp,cpp}           // ✓ the 5 pages + tab bar; touch → press/drag/
+                           //   release, page routing
+    widgets.{hpp,cpp}      // ✓ knob, float knob, crossfader, slider, step
+                           //   grid, note box, note picker, tab bar, cycle
+                           //   button
+    osc_page.{hpp,cpp}     // ✓ OSC: 2× (PIT SHP OCT) + MIX, FIL: CUT/RES
+    env_page.{hpp,cpp}     // ✓ ENV: ATK/DEC/SUS/REL + envelope curve preview
+    mod_page.{hpp,cpp}     // ✓ MOD: LFO1/2 rates + 6-row modulation matrix
+    seq_page.{hpp,cpp}     // ✓ SEQ: note box, play/stop, tempo, 4×4 grid
+    debug_page.{hpp,cpp}   // ✓ DBG: the old one-screen debug layout (§11)
     theme.hpp              // ✓ colours
 
 test/                      // ✓ host build (native gcc, no MCU) — standalone
@@ -274,7 +295,10 @@ test/                      // ✓ host build (native gcc, no MCU) — standalone
   test_main.cpp            // ✓ doctest entry point
   test_oscillator.cpp      // ✓ pitch / level / anti-alias asserts
   test_parameters.cpp      // ✓ clamping, snapping, value formatting
-  test_ui.cpp              // ✓ debug-page interactions (tap, hold, drag)
+  test_ui.cpp              // ✓ page interactions: tab switch, OSC/ENV/MOD/SEQ,
+                           //   ENV curve reflects ADSR + no sustain trails, buffer-convergence
+                            //   regressions (page switch, one-shot widget,
+                            //   picker grid-gap, playhead)
   test_sequencer.cpp       // ✓ step timing, start/stop, tempo changes
   wav_writer.hpp           // ✓ 16-bit PCM WAV writer (host-only)
   render_wav.cpp           // ✓ render the DSP to a .wav to audition on a PC
@@ -326,7 +350,7 @@ Because `dsp/` is HAL-free, a separate **standalone** CMake project under
 cmake -S test -B test/build && cmake --build test/build
 ctest --test-dir test/build --output-on-failure
 ./test/build/render_wav out.wav
-./test/build/render_ui ui    # writes ui_main.ppm + ui_picker.ppm
+./test/build/render_ui ui    # one screenshot per page: ui_{osc,env,mod,seq,dbg,picker}.ppm
 ```
 
 - **doctest** (single header, fetched via FetchContent) asserts on oscillator
@@ -335,8 +359,8 @@ ctest --test-dir test/build --output-on-failure
 - `render_wav` runs the DSP for a few seconds and writes a `.wav`, so changes
   can be *heard* on a PC before flashing. For a synth, audible regression
   testing is invaluable.
-- `render_ui` drives the debug page through a few states and dumps the
-  framebuffer, so layout changes can be looked at without flashing.
+- `render_ui` drives the UI through a few states and dumps one screenshot per
+  page, so layout changes can be looked at without flashing.
 - The same `dsp/`, `params/`, `ui/` and `display_draw` `.cpp` files are also
   compiled into the firmware, so they are built by both toolchains.
 
@@ -364,7 +388,12 @@ the DSP so there is something to hook the engine to; see §10.)
 
 ## 10. Status
 
-- ✅ **Display** — LTDC bring-up, RGB565 framebuffer in AXI-SRAM, 8×8 bitmap text.
+- ✅ **Display** — LTDC bring-up, double-buffered RGB565 in AXI-SRAM (the
+  CPU draws the back buffer; a line-0 interrupt swaps the pair when a new
+  frame has been drawn, so the panel never scans a half-drawn or a stale
+  frame; the box of drawn pixels is pulled into the demoted buffer on the
+  same swap, so a one-shot widget change lands in both and can't ghost),
+  8×8 bitmap text.
 - ✅ **Audio path (§9.1)** — PLL2 → 48 kHz SAI clock, SAI2 Block A master + MCLK,
   DMA2_Stream1 circular double-buffer in `RAM_D2`, WM8994 over I²C4. A 440 Hz
   test tone streams via a per-half-buffer render callback.
@@ -375,12 +404,13 @@ the DSP so there is something to hook the engine to; see §10.)
   ~50 Hz. `app.cpp` draws an on-screen button; touching it raises a gate
   (`volatile bool`, read in the SAI ISR) that switches the test tone on/off — a
   hand-driven stand-in for the real `note_on`/`note_off` until the engine lands.
-- ✅ **Debug UI page + parameter set** — `ui/` widgets and the one-screen debug
-  page (§11), editing `params::Parameters` and a `sequencer::Pattern`. Not
-  hooked to sound yet: the audio callback streams silence. Host-tested and
-  screenshot-able under `test/`.
+- ✅ **Multi-page UI** — `ui/` widgets and a five-page tab-bar layout
+  (OSC / ENV / MOD / SEQ / DBG; the old one-screen debug page kept as the
+  fifth tab, §11), editing `params::Parameters`, `modulation::Matrix` and a
+  `sequencer::Pattern`. Not hooked to sound yet: the audio callback streams
+  silence. Host-tested and screenshot-able under `test/`.
 - ⬜ §9.3 onward (additive oscillator, voice, filter, LFO, 6-voice manager,
-  sequencer clock, controls).
+  controls).
 - ✅ **Sequencer clock + play/stop** — `sequencer/sequencer`, ticked in the
   audio callback; the play button and the grid's playhead go through
   `sequencer::Transport`. Steps are timed but trigger no notes yet.
@@ -396,33 +426,80 @@ each owns a rectangle and redraws only itself, only when dirty. Every frame,
 `sync()` compares what a widget last drew with the model (parameter set /
 pattern) and invalidates on a change, so a value changed from anywhere (touch,
 pot, CV, preset load) appears without the UI being told, and an idle screen
-costs no drawing. That matters because we draw straight into the
-scanned-out framebuffer: less redrawing, less flicker.
+costs no drawing. The CPU draws into the back buffer and the LTDC swaps the
+pair at line 0, but only once something has actually been drawn (the drawing
+calls set a dirty flag that the swap consumes) — otherwise the panel keeps
+scanning the last complete frame, so an idle or partially-redrawn UI never
+flaps between a fresh and a stale buffer; redraw-on-change still matters
+because the foreground loop shares CPU with the audio path, and a full
+redraw is a 480×272 fill plus every widget on top of it.
+
+Convergence is the display layer's job, not the UI's: the dirty flag only
+guarantees a flip, not that both buffers agree. A one-shot change (a cycled
+button label) is drawn into exactly one buffer and the widget then goes
+clean, so as long as anything else keeps flipping the pair — the tab bar —
+the panel alternates the fresh region against the stale one, a permanent
+ghost. `display_draw` therefore tracks the bounding box of everything
+written into the back buffer since the last promotion, and `swap_buffers()`
+copies that box from the just-promoted front buffer into the newly demoted
+back buffer on the same swap; in the line-0 IRQ that runs during vertical
+blanking, where the demoted buffer is not scanned, so the copy is
+invisible. Both buffers agree on every region drawn since the last flip,
+and an idle frame copies nothing.
 
 Touch is polled at ~50 Hz in the foreground loop. `ui::Ui` turns samples into
 press / drag / release; the widget under the finger at press owns the touch
 until release.
 
-### The debug page
+### The pages and the tab bar
 
-```
-+-- OSC ---------------+-----------------------------------------+
-| OS1  PIT SHP OCT  M  | STEP 05 C#4 v | > |  120  =====O=====  |
-| OS2  PIT SHP OCT  I  |---------------+---+--------------------|
-|                   X  |   1   |   2 X  |   3    |   4           |
-+-- MOD ---------------+   5   |   6    |   7 X  |   8           |
-| ENV  ATK DEC         |   9   |  10    |  11    |  12           |
-| LF1  SPD DST DEP     |  13   |  14    |  15    |  16           |
-| LF2  SPD DST DEP     |                                         |
-+----------------------+-----------------------------------------+
-     left third                   right two thirds
-```
+The screen is 480×246 for the active page plus a 26 px tab bar along the
+bottom. Five tabs — **OSC, ENV, MOD, SEQ, DBG** — the active one accent-filled;
+a press on the bar's tab zone switches page. The bar's right side carries a
+status readout (`Ui::set_status`, e.g. an init failure) and the transport dot,
+lit while `Transport::run` is set, so both are visible on every page.
+
+### The OSC page
+
+Two rows, **OS1** / **OS2**, each with PIT / SHP / OCT knobs; the **MIX**
+crossfader spans both rows (top = osc 1, bottom = osc 2). Right of the
+separator, the filter's **CUT** / **RES** knobs — stored in the parameter set,
+inert until the filter DSP lands.
+
+### The ENV page
+
+**ATK / DEC / SUS / REL** knobs across the top, and a read-only preview of the
+resulting envelope below: the attack, decay and release spans share three
+quarters of the width in proportion to their values, and the sustain level
+(a level, not a duration) is the flat top of the remaining quarter. The
+preview clears its own rect before drawing, like every other widget, so
+dragging a knob never leaves ghost strokes behind.
+
+### The MOD page
+
+**LFO1 / LFO2** rate knobs, and the 6-row modulation matrix in two columns of
+three rows: per row a source and a destination (tap-to-cycle buttons) and an
+**AMT** knob (−100..+100, step 5; 0 = off).
+
+### The SEQ page
+
+The note box, play/stop and tempo on a bar, the 4×4 step grid full width
+below.
+
+### The DBG page
+
+The original one-screen debug layout — oscillator / envelope / LFO cells on the
+left, the step grid on the right — kept as a fifth tab until the others cover
+it. The OSC header shows the CPU clock (or, in red, an init failure); the MOD
+header shows the audio-interrupt load as `CPU avg/peak%`.
+
+### Widget behaviour
 
 - **Knobs** (Elektron-style: arc, value, label) use *relative* drag: right or
   up increases, ~160 px for a full sweep or 14 px per step for stepped values.
   Nothing jumps on touch-down. Bipolar values fill from 12 o'clock.
-- **MIX** is a vertical crossfader spanning both oscillator rows: top = osc 1,
-  bottom = osc 2.
+- **Cycle buttons** tap-cycle through their names (the matrix's sources and
+  destinations).
 - **Step grid**: tap toggles a step (X) and selects it; hold (~0.45 s) selects
   without toggling and opens the note picker. The playing step is shaded,
   read from `Transport::step`.
@@ -432,5 +509,3 @@ until release.
 - **Note picker**: one-octave keyboard over the grid with octave −/+; picking a
   key sets the note, turns the step on and closes. Touching outside dismisses.
 - **Tempo** is an absolute slider (30–300 BPM), 16th-note steps.
-- The OSC header shows the CPU clock (or, in red, an init failure); the MOD
-  header shows the audio-interrupt load as `CPU avg/peak%`.

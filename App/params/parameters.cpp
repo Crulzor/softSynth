@@ -6,14 +6,6 @@ namespace params
 namespace
 {
 
-constexpr const char* kLfoDestNames[] = {"---", "PIT", "SHP",
-                                         "MIX", "AMP", "CUT"};
-static_assert(sizeof(kLfoDestNames) / sizeof(kLfoDestNames[0]) ==
-                  static_cast<int>(LfoDest::Count),
-              "one name per LfoDest");
-
-constexpr float kLastDest = static_cast<float>(LfoDest::Count) - 1.0f;
-
 // Indexed by Id; keep in the same order as the enum.
 constexpr Spec kSpecs[kCount] = {
     // label  min     max        def    step  format
@@ -27,13 +19,14 @@ constexpr Spec kSpecs[kCount] = {
 
     {"ATK", 0.0f, 1.0f, 0.05f, 0.0f, Format::Scale127, nullptr},
     {"DEC", 0.0f, 1.0f, 0.5f, 0.0f, Format::Scale127, nullptr},
+    {"SUS", 0.0f, 1.0f, 0.7f, 0.0f, Format::Scale127, nullptr},
+    {"REL", 0.0f, 1.0f, 0.3f, 0.0f, Format::Scale127, nullptr},
 
     {"SPD", 0.0f, 1.0f, 0.3f, 0.0f, Format::Scale127, nullptr},
-    {"DST", 0.0f, kLastDest, 0.0f, 1.0f, Format::Enum, kLfoDestNames},
-    {"DEP", -1.0f, 1.0f, 0.0f, 0.0f, Format::Bipolar64, nullptr},
     {"SPD", 0.0f, 1.0f, 0.3f, 0.0f, Format::Scale127, nullptr},
-    {"DST", 0.0f, kLastDest, 0.0f, 1.0f, Format::Enum, kLfoDestNames},
-    {"DEP", -1.0f, 1.0f, 0.0f, 0.0f, Format::Bipolar64, nullptr},
+
+    {"CUT", 0.0f, 1.0f, 0.7f, 0.0f, Format::Scale127, nullptr},
+    {"RES", 0.0f, 1.0f, 0.1f, 0.0f, Format::Scale127, nullptr},
 
     {"BPM", 30.0f, 300.0f, 120.0f, 1.0f, Format::Unsigned, nullptr},
 };

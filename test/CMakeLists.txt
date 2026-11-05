@@ -39,6 +39,10 @@ add_library(ui STATIC
     ${APP_DIR}/params/parameters.cpp
     ${APP_DIR}/ui/widgets.cpp
     ${APP_DIR}/ui/debug_page.cpp
+    ${APP_DIR}/ui/env_page.cpp
+    ${APP_DIR}/ui/mod_page.cpp
+    ${APP_DIR}/ui/osc_page.cpp
+    ${APP_DIR}/ui/seq_page.cpp
     ${APP_DIR}/ui/ui.cpp
     host_framebuffer.cpp
 )

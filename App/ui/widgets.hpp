@@ -146,6 +146,50 @@ protected:
 	void draw() override;
 };
 
+// A knob bound to a raw float instead of a params::Id, for model values that
+// live outside the parameter set (the matrix's amounts). Same interaction as
+// a knob: relative drag, a bipolar ring when the range straddles zero; the
+// value text shows round(value * text_scale).
+class FloatKnob : public Widget
+{
+public:
+	FloatKnob(Rect r, float* value, float min, float max, float step,
+	          int text_scale, const char* label)
+	    : Widget(r),
+	      value_(value),
+	      min_(min),
+	      max_(max),
+	      step_(step),
+	      text_scale_(text_scale),
+	      label_(label)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+	void drag(int x, int y, std::uint32_t now_ms) override;
+	void release(std::uint32_t now_ms) override;
+
+protected:
+	void draw() override;
+
+private:
+	float normalized() const;
+	void set_normalized(float n);
+
+	float* value_;
+	float min_;
+	float max_;
+	float step_;
+	int text_scale_;
+	const char* label_;
+	float shown_ = 0.0f;
+	bool active_ = false;
+	int x0_ = 0;
+	int y0_ = 0;
+	float n0_ = 0.0f;
+};
+
 // Horizontal slider with *absolute* positioning (the value follows the
 // finger). Used for tempo, where the track is long enough to aim at.
 class Slider : public Widget
@@ -308,6 +352,79 @@ private:
 	bool visible_ = false;
 	int step_ = 0;
 	int octave_ = 4;
+};
+
+// Bottom tab bar: one button per page, the active page's button accent-filled,
+// a status message and the transport dot at the right edge.
+class TabBar : public Widget
+{
+public:
+	TabBar(Rect r, int num_tabs, const char* const* tab_names,
+	       const sequencer::Transport& transport)
+	    : Widget(r), num_tabs_(num_tabs), tab_names_(tab_names),
+	      transport_(transport)
+	{
+	}
+
+	int active() const { return active_; }
+	void set_active(int i) { active_ = i; }
+
+	// The tab pressed this frame, or -1 if the press was outside the tabs.
+	int take_switch();
+
+	// Short message shown at the right (e.g. an init failure); nullptr clears.
+	void set_status(const char* text) { status_ = text; }
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+
+protected:
+	void draw() override;
+
+private:
+	static constexpr int kTabW = 48;
+	static constexpr int kDot = 6;
+
+	Rect tab(int i) const;
+	int tab_at(int x, int y) const;
+
+	int num_tabs_;
+	const char* const* tab_names_;
+	const sequencer::Transport& transport_;
+	int active_ = 0;
+	const char* status_ = nullptr;
+	int switch_ = -1;
+
+	// What the last draw showed, for sync().
+	int shown_active_ = -1;
+	const char* shown_status_ = nullptr;
+	bool shown_run_ = false;
+	int shown_step_ = -1;
+};
+
+// Tap to cycle an enum value one step (wrapping); shows the current entry's
+// name. The MOD matrix's source / destination cells are these.
+class CycleButton : public Widget
+{
+public:
+	CycleButton(Rect r, int* value, int count, const char* const* names)
+	    : Widget(r), value_(value), count_(count), names_(names)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+	void release(std::uint32_t now_ms) override;
+
+protected:
+	void draw() override;
+
+private:
+	int* value_;
+	int count_;
+	const char* const* names_;
+	int shown_ = -1;
+	bool pressed_ = false;
 };
 
 }  // namespace ui

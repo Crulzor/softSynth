@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// Screenshot the UI on the desktop: drive the debug page into a few states and
-// dump the framebuffer as binary PPM images, so layout changes can be looked
+// Screenshot the UI on the desktop: put the pages into a few states and dump
+// the framebuffer as one binary PPM per page, so layout changes can be looked
 // at before flashing.
 //
 //   ./render_ui [prefix]
 //
-// Writes <prefix>_main.ppm and <prefix>_picker.ppm (default prefix "ui").
-// Convert with e.g. `magick ui_main.ppm ui_main.png`.
+// Writes <prefix>_{osc,env,mod,seq,dbg,picker}.ppm (default prefix "ui").
+// Convert with e.g. `magick ui_seq.ppm ui_seq.png`.
 #include <cstdio>
 #include <string>
 
@@ -54,12 +54,6 @@ int main(int argc, char** argv)
 	params.set(params::Id::Osc2Octave, -1.0f);
 	params.set(params::Id::OscMix, 0.3f);
 	params.set(params::Id::EnvDecay, 0.7f);
-	params.set(params::Id::Lfo1Dest,
-	           static_cast<float>(params::LfoDest::Pitch));
-	params.set(params::Id::Lfo1Amount, 0.25f);
-	params.set(params::Id::Lfo2Dest,
-	           static_cast<float>(params::LfoDest::Cutoff));
-	params.set(params::Id::Lfo2Amount, -0.6f);
 	const int on[] = {0, 3, 6, 8, 11, 14};
 	const std::uint8_t notes[] = {48, 55, 60, 51, 63, 58};
 	for(int i = 0; i < 6; ++i)
@@ -69,45 +63,66 @@ int main(int argc, char** argv)
 	}
 
 	sequencer::Transport transport;
-	ui::Ui ui(params, pattern, transport);
+	modulation::Matrix matrix;
+	ui::Ui ui(params, pattern, transport, matrix);
 	ui.redraw_all();
 	ui.set_cpu_mhz(480);
 	ui.set_cpu_load(0.123f, 0.187f);
 
 	std::uint32_t now = 0;
+	bool ok = true;
 	auto frame = [&](bool pressed, int x, int y)
 	{
 		now += 20;
 		ui.update(ui::Touch{pressed, x, y}, now);
 	};
-
-	// Select step 7 with a double tap (toggle off and on again), and show the
-	// sequencer playing step 4.
-	for(int i = 0; i < 2; ++i)
+	// Centre of the tab-bar button for page `i`.
+	auto tab = [&](int i)
 	{
-		frame(true, 160 + 2 * 80 + 40, 35 + 1 * 59 + 29);
+		frame(true, i * 48 + 24, 259);
 		frame(false, 0, 0);
-	}
-	transport.run = true;  // as if play was pressed and the clock is on step 4
+	};
+	auto shot = [&](const char* name)
+	{
+		ok = write_ppm(prefix + "_" + name + ".ppm") && ok;
+	};
+
+	// As if play was pressed and the clock is on step 3.
+	transport.run = true;
 	transport.step = 3;
 	frame(false, 0, 0);
 
-	bool ok = write_ppm(prefix + "_main.ppm");
+	// SEQ: the tab starts on OSC; go to SEQ and tap step 7 to turn it on and
+	// select it.
+	tab(3);
+	frame(true, 3 * 120 + 60, 35 + 52 + 26);
+	frame(false, 0, 0);
+	shot("seq");
 
 	// Long press step 12 to bring up the note picker.
 	for(int i = 0; i < 30; ++i)
 	{
-		frame(true, 160 + 3 * 80 + 40, 35 + 2 * 59 + 29);
+		frame(true, 60, 35 + 3 * 52 + 26);
 	}
 	frame(false, 0, 0);
-	ok = write_ppm(prefix + "_picker.ppm") && ok;
+	shot("picker");
+
+	tab(4);
+	shot("dbg");
+	tab(0);
+	shot("osc");
+	tab(1);
+	shot("env");
+	tab(2);
+	shot("mod");
 
 	if(!ok)
 	{
 		std::fprintf(stderr, "render_ui: could not write images\n");
 		return 1;
 	}
-	std::printf("render_ui: wrote %s_main.ppm and %s_picker.ppm\n",
-	            prefix.c_str(), prefix.c_str());
+	std::printf(
+	    "render_ui: wrote %s_{osc,env,mod,seq,dbg,picker}.ppm\n",
+	    prefix.c_str());
 	return 0;
 }

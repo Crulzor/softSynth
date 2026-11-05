@@ -10,5 +10,11 @@
 *.list
 .mxproject
 
+# render_ui page dumps
+ui_*.ppm
+
+# agent local state
+/.opencode/
+
 # STM32CubeCLT / IDE local bundle-manager state (not source)
 /.settings/

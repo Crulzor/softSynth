@@ -21,6 +21,14 @@ std::string shown(const Parameters& p, Id id)
 	return buf;
 }
 
+// Format a raw value under a synthetic spec, for formats no parameter uses.
+std::string shown_as(const params::Spec& s, float value)
+{
+	char buf[8];
+	ui::format_value(s, value, buf);
+	return buf;
+}
+
 }  // namespace
 
 TEST_CASE("parameters start at their spec defaults")
@@ -53,8 +61,8 @@ TEST_CASE("normalized round-trips across the range")
 	CHECK(p.get(Id::Tempo) == 30.0f);
 	p.set_normalized(Id::Tempo, 1.0f);
 	CHECK(p.get(Id::Tempo) == 300.0f);
-	p.set(Id::Lfo1Amount, 0.5f);
-	CHECK(p.normalized(Id::Lfo1Amount) == doctest::Approx(0.75f));
+	p.set(Id::EnvRelease, 0.8f);
+	CHECK(p.normalized(Id::EnvRelease) == doctest::Approx(0.8f));
 }
 
 TEST_CASE("values format the way the UI shows them")
@@ -69,13 +77,17 @@ TEST_CASE("values format the way the UI shows them")
 
 	p.set(Id::OscMix, 1.0f);
 	CHECK(shown(p, Id::OscMix) == "127");
-	p.set(Id::Lfo1Amount, 1.0f);
-	CHECK(shown(p, Id::Lfo1Amount) == "+63");
-	p.set(Id::Lfo1Amount, -1.0f);
-	CHECK(shown(p, Id::Lfo1Amount) == "-64");
+	// No live parameter uses Bipolar64 or Enum any more (the mod matrix owns
+	// its name tables), so exercise those formats through a synthetic spec.
+	const params::Spec bipolar{"AMP", -1.0f, 1.0f, 0.0f, 0.0f,
+	                           params::Format::Bipolar64, nullptr};
+	CHECK(shown_as(bipolar, 1.0f) == "+63");
+	CHECK(shown_as(bipolar, -1.0f) == "-64");
 
-	p.set(Id::Lfo2Dest, static_cast<float>(params::LfoDest::Amp));
-	CHECK(shown(p, Id::Lfo2Dest) == "AMP");
+	static const char* const kDstNames[] = {"OFF", "MID", "ON"};
+	const params::Spec enume{"DST", 0.0f, 2.0f, 0.0f, 1.0f,
+	                         params::Format::Enum, kDstNames};
+	CHECK(shown_as(enume, 2.0f) == "ON");
 	CHECK(shown(p, Id::Tempo) == "120");
 }
 

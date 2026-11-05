@@ -215,8 +215,8 @@ void Knob::draw()
 
 	char text[8];
 	format_value(s, shown_, text);
-	draw_centered(r, r.y + 29, text, theme::kText);
-	draw_centered(r, r.y + 39, s.label, active_ ? theme::kAccent : theme::kDim);
+	draw_centered(r, r.y + 27, text, theme::kText);
+	draw_centered(r, r.y + 36, s.label, active_ ? theme::kAccent : theme::kDim);
 }
 
 // --- CrossFader -------------------------------------------------------------
@@ -246,6 +246,66 @@ void CrossFader::draw()
 	draw_centered(r, r.y + r.h - 19, text, theme::kText);
 	draw_centered(r, r.y + r.h - 9, s.label,
 	              active_ ? theme::kAccent : theme::kDim);
+}
+
+// --- FloatKnob --------------------------------------------------------------
+
+float FloatKnob::normalized() const
+{
+	return (*value_ - min_) / (max_ - min_);
+}
+
+void FloatKnob::set_normalized(float n)
+{
+	const float v = min_ + n * (max_ - min_);
+	*value_ = v < min_ ? min_ : (v > max_ ? max_ : v);
+}
+
+void FloatKnob::sync()
+{
+	if(*value_ != shown_)
+	{
+		invalidate();
+	}
+}
+
+void FloatKnob::press(int x, int y, std::uint32_t)
+{
+	active_ = true;
+	x0_ = x;
+	y0_ = y;
+	n0_ = normalized();
+	invalidate();
+}
+
+void FloatKnob::drag(int x, int y, std::uint32_t)
+{
+	const float px_full =
+	    step_ > 0.0f ? (max_ - min_) / step_ * kPxPerStep : kPxFullRange;
+	const float n =
+	    n0_ + static_cast<float>((x - x0_) - (y - y0_)) / px_full;
+	set_normalized(n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n));
+}
+
+void FloatKnob::release(std::uint32_t)
+{
+	active_ = false;
+	invalidate();
+}
+
+void FloatKnob::draw()
+{
+	const Rect& r = rect_;
+	shown_ = *value_;
+
+	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
+	draw_ring(r.x + r.w / 2, r.y + 2 + kKnobOuter, normalized(), min_ < 0.0f);
+
+	char text[8];
+	put_int(round_to_int(*value_ * static_cast<float>(text_scale_)), text,
+	        min_ < 0.0f);
+	draw_centered(r, r.y + 27, text, theme::kText);
+	draw_centered(r, r.y + 36, label_, active_ ? theme::kAccent : theme::kDim);
 }
 
 // --- Slider -----------------------------------------------------------------
@@ -422,12 +482,15 @@ void StepGrid::release(std::uint32_t)
 
 void StepGrid::draw()
 {
+	// The whole rect, not just the cells: the note picker draws over this
+	// rectangle and its keys reach into the gaps between the cells. Redrawing
+	// the cells only would leave the piano showing through those gaps. The
+	// fill wipes every cell, so all of them are redrawn, not just the dirty
+	// ones; the mask only decides whether to draw at all.
+	display::fill_rect(rect_.x, rect_.y, rect_.w, rect_.h, theme::kBackground);
 	for(int i = 0; i < sequencer::kSteps; ++i)
 	{
-		if(dirty_cells_ & (1u << i))
-		{
-			draw_cell(i);
-		}
+		draw_cell(i);
 	}
 	dirty_cells_ = 0;
 }
@@ -700,6 +763,135 @@ void NotePicker::draw()
 		    k.x + 1, k.y, k.w - 2, k.h - 1,
 		    kBlackSemis[i] == current ? theme::kAccent : theme::kBlackKey);
 	}
+}
+
+// --- TabBar -------------------------------------------------------------------
+
+Rect TabBar::tab(int i) const
+{
+	return Rect{rect_.x + i * kTabW, rect_.y, kTabW, rect_.h};
+}
+
+int TabBar::tab_at(int x, int y) const
+{
+	if(!rect_.contains(x, y) || x >= rect_.x + num_tabs_ * kTabW)
+	{
+		return -1;
+	}
+	const int i = (x - rect_.x) / kTabW;
+	return (i >= 0 && i < num_tabs_) ? i : -1;
+}
+
+void TabBar::sync()
+{
+	if(active_ != shown_active_ || status_ != shown_status_ ||
+	   transport_.run != shown_run_ || transport_.step != shown_step_)
+	{
+		invalidate();
+	}
+}
+
+void TabBar::press(int x, int y, std::uint32_t)
+{
+	const int i = tab_at(x, y);
+	if(i >= 0)
+	{
+		active_ = i;
+		switch_ = i;
+		invalidate();
+	}
+}
+
+int TabBar::take_switch()
+{
+	const int i = switch_;
+	switch_ = -1;
+	return i;
+}
+
+void TabBar::draw()
+{
+	const Rect& r = rect_;
+	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
+	display::fill_rect(r.x, r.y, r.w, 1, theme::kTrack);
+
+	for(int i = 0; i < num_tabs_; ++i)
+	{
+		const Rect t = tab(i);
+		if(i == active_)
+		{
+			display::fill_rect(t.x, t.y, t.w, t.h - 1, theme::kAccent);
+		}
+		else
+		{
+			display::fill_rect(t.x + t.w - 1, t.y + 1, 1, t.h - 2,
+			                   theme::kTrack);
+		}
+		draw_centered(t, t.y + (t.h - 8) / 2, tab_names_[i],
+		              i == active_ ? display::colors::Black : theme::kDim);
+	}
+
+	if(status_ != nullptr)
+	{
+		const int dot_x = r.x + r.w - kDot - 4;
+		int x = dot_x - 6 - display::text_width(status_);
+		if(x < r.x + num_tabs_ * kTabW + 4)
+		{
+			x = r.x + num_tabs_ * kTabW + 4;
+		}
+		display::draw_text(x, r.y + (r.h - 8) / 2, status_, theme::kText);
+	}
+
+	// Transport dot: blinks with the step while running, dim when stopped.
+	const int dot_x = r.x + r.w - kDot - 4;
+	const int dot_y = r.y + (r.h - kDot) / 2;
+	display::Color c = theme::kTrack;
+	if(transport_.run)
+	{
+		c = ((transport_.step & 1) == 0) ? theme::kAccent : theme::kHeader;
+	}
+	display::fill_rect(dot_x, dot_y, kDot, kDot, c);
+
+	shown_active_ = active_;
+	shown_status_ = status_;
+	shown_run_ = transport_.run;
+	shown_step_ = transport_.step;
+}
+
+// --- CycleButton --------------------------------------------------------------
+
+void CycleButton::sync()
+{
+	if(*value_ != shown_)
+	{
+		invalidate();
+	}
+}
+
+void CycleButton::press(int, int, std::uint32_t)
+{
+	*value_ = (*value_ + 1) % count_;
+	pressed_ = true;
+	invalidate();
+}
+
+void CycleButton::release(std::uint32_t)
+{
+	pressed_ = false;
+	invalidate();
+}
+
+void CycleButton::draw()
+{
+	const Rect& r = rect_;
+	const int v = (shown_ = *value_);
+	const char* name = (v >= 0 && v < count_) ? names_[v] : "???";
+	display::fill_rect(r.x, r.y, r.w, r.h,
+	                   pressed_ ? theme::kHeader : theme::kPanel);
+	display::draw_rect(r.x, r.y, r.w, r.h,
+	                   pressed_ ? theme::kAccent : theme::kDim);
+	draw_centered(r, r.y + (r.h - 8) / 2, name,
+	              pressed_ ? theme::kAccent : theme::kText);
 }
 
 }  // namespace ui
