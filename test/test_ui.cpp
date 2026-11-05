@@ -531,6 +531,45 @@ TEST_CASE("moving the sustain level leaves no trail in the curve")
 	CHECK(accent_count() == clean);
 }
 
+TEST_CASE("the ENV curve leaves no stroke outside its rect")
+{
+	Rig r;
+	r.tap(72, 259);  // ENV tab
+
+	const std::uint16_t accent = static_cast<std::uint16_t>(
+	    ((ui::theme::kAccent.r & 0xF8) << 8) |
+	    ((ui::theme::kAccent.g & 0xFC) << 3) | (ui::theme::kAccent.b >> 3));
+
+	// With release = 0 the release stage collapses to a vertical line at the
+	// curve's right edge.
+	r.params.set(Id::EnvAttack, 0.2f);
+	r.params.set(Id::EnvDecay, 0.3f);
+	r.params.set(Id::EnvSustain, 0.5f);
+	r.params.set(Id::EnvRelease, 0.0f);
+	r.frame(false);
+
+	// Adding release redraws the curve; the old vertical line must be erased,
+	// not left behind. The curve's corner used to land one pixel past the
+	// clear rect, so the line stuck in the column and row just outside it.
+	r.params.set(Id::EnvRelease, 0.4f);
+	r.frame(false);
+
+	const int rightX = kCurveX + kCurveW;
+	for(int y = kCurveY; y < kCurveY + kCurveH; ++y)
+	{
+		CHECK(display::detail::g_framebuffer[
+		            static_cast<std::uint32_t>(y) * display::kWidth + rightX] !=
+		      accent);
+	}
+	const int bottomY = kCurveY + kCurveH;
+	for(int x = kCurveX; x < kCurveX + kCurveW; ++x)
+	{
+		CHECK(display::detail::g_framebuffer[
+		            static_cast<std::uint32_t>(bottomY) * display::kWidth + x] !=
+		      accent);
+	}
+}
+
 TEST_CASE("the SEQ page edits the pattern and the transport")
 {
 	Rig r;

@@ -55,14 +55,19 @@ void CurvePreview::draw()
 {
 	const Rect& r = rect_;
 	const int x0 = r.x;
-	const int w = r.w;
 	const int yTop = r.y;
-	const int yBot = r.y + r.h;
-	const int h = r.h;
+	// Inset the curve one pixel from the rect's right and bottom edges so its
+	// bounding box stays inside the clear rect below. Otherwise the release
+	// stage -- a vertical line at x = x0 + w when release = 0 -- is drawn one
+	// pixel past the rect and is never erased when the curve changes, leaving
+	// a stuck line on the right of the preview.
+	const int w = r.w - 1;
+	const int h = r.h - 1;
+	const int yBot = yTop + h;
 
 	// Clear our own rect first, like every other widget: the curve moved, and
 	// the pixels it vacated are ours to reclaim, not the page's to clean.
-	display::fill_rect(x0, yTop, w, h, theme::kBackground);
+	display::fill_rect(x0, yTop, r.w, r.h, theme::kBackground);
 
 	const float a = params_.get(Id::EnvAttack);
 	const float d = params_.get(Id::EnvDecay);
@@ -97,7 +102,7 @@ void CurvePreview::draw()
 	display::draw_line(x2, susY, x3, susY, theme::kAccent);
 	display::draw_line(x3, susY, x4, yBot, theme::kAccent);
 
-	display::draw_rect(x0, yTop, w, h, theme::kHeader);
+	display::draw_rect(x0, yTop, r.w, r.h, theme::kHeader);
 }
 
 // --- EnvPage -----------------------------------------------------------------

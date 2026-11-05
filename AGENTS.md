@@ -77,9 +77,9 @@ What landed:
   a raw `float*`, for the matrix amounts).
 - `env_page` curve preview: `fill_polygon` (scanline, simple x-monotone shapes)
   + `draw_line` (Bresenham) added to `display_draw`.
-- Tests: 36/36 under `test/` — tab switch, OSC/ENV/MOD/SEQ page edits, plus
+- Tests: 37/37 under `test/` — tab switch, OSC/ENV/MOD/SEQ page edits, plus
   ENV curve regression tests (all four ADSR values reflected, no sustain
-  trails).
+  trails, no stroke outside the curve rect).
   `render_ui` dumps one PPM per page (`ui_{osc,env,mod,seq,dbg,picker}.ppm`).
 
 ## Done: flicker / ghosting fixes (2026-11-05, both confirmed on hardware)
@@ -132,3 +132,22 @@ pre-existing on-steps survive) and `a playhead tick redraws every cell, not
 just the two it touched` (sets `transport.step` as the SAI clock would).
 Both confirmed on hardware 2026-11-05: no piano ghost in the gaps, and the
 grid stays fully painted while the pattern plays.
+
+## Done: ENV curve stuck-release-line (2026-11-05)
+
+Third ghost variant, smallest scale: a widget drawing one pixel past its own
+clear rect. `CurvePreview::draw()` (`App/ui/env_page.cpp`) computed the
+curve's bounding box with `x4 = x0 + w`, `yBot = yTop + r.h` — the corner one
+pixel past the `fill_rect(x0, yTop, r.w, r.h)` clear. At release = 0 the
+release stage collapses to a vertical line at `x = x0 + w = 472`, outside the
+clear rect (x 8..471, y 66..239); adding release then cleared x 8..471 only
+and left the old line stuck on the right of the preview (the bottom row
+`y = 240` had the same 1 px overhang). Fix: inset the curve one pixel
+(`w = r.w - 1`, `h = r.h - 1`, `yBot = yTop + h`) so its bounding box equals
+the clear rect; clear and border (`draw_rect(x0, yTop, r.w, r.h)`, drawn
+last) still use the full rect, so the border overpaints the columns/rows the
+curve touches. Lesson: any widget drawing past its clear rect can ghost —
+suspect widget-level overhang first, then time-dependent redraws, then the
+flip path. Regression `the ENV curve leaves no stroke outside its rect`
+(verified red: 88 failed assertions = the stuck line in the right column +
+bottom row). Suite 37/37; confirmed on hardware 2026-11-05.
