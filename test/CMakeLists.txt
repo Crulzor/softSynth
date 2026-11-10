@@ -36,6 +36,7 @@ target_compile_options(dsp PRIVATE -Wall -Wextra)
 # a stand-in framebuffer (host_framebuffer.cpp) instead of the LTDC one.
 add_library(ui STATIC
     ${APP_DIR}/display_draw.cpp
+    ${APP_DIR}/midi/midi.cpp
     ${APP_DIR}/params/parameters.cpp
     ${APP_DIR}/ui/widgets.cpp
     ${APP_DIR}/ui/debug_page.cpp
@@ -66,6 +67,7 @@ enable_testing()
 add_executable(dsp_tests
     test_main.cpp
     test_oscillator.cpp
+    test_midi.cpp
     test_parameters.cpp
     test_sequencer.cpp
     test_ui.cpp

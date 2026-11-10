@@ -1,0 +1,3 @@
+# Vendored ST USB Host Library core — keep upstream formatting untouched.
+DisableFormat: true
+SortIncludes: false

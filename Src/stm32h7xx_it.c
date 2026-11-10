@@ -57,7 +57,7 @@
 /* External variables --------------------------------------------------------*/
 
 /* USER CODE BEGIN EV */
-
+extern HCD_HandleTypeDef hhcd_USB_OTG_FS;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -199,5 +199,17 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief This function handles OTG FS global interrupt.
+  * The OTG_FS port runs in host role; the handle lives in
+  * App/platform/usbh/usbh_conf.c (the only HCD handle in the tree) and
+  * the IRQ funnels into the USBH_LL_* hooks via the strong
+  * HAL_HCD_*Callback overrides in the same file.
+  */
+void OTG_FS_IRQHandler(void)
+{
+  HAL_HCD_IRQHandler(&hhcd_USB_OTG_FS);
+}
 
 /* USER CODE END 1 */

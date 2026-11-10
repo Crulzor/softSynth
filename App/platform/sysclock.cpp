@@ -36,6 +36,10 @@ bool init()
 	//    /5 -> 5 MHz ref, x160 -> 800 MHz VCO, /2 -> 400 MHz  (rev Y)
 	//    PLL1 isn't SYSCLK yet (the CPU runs on HSI), so the HAL may stop and
 	//    reprogram it.
+	//    The Q output also feeds the USB 48 MHz clock (USBSEL=PLL, selected in
+	//    the OTG_FS MspInit): /20 -> exactly 48.000 MHz from the 960 MHz VCO.
+	//    (Rev-V silicon; on 400 MHz rev Y there is no integer 48 MHz from that
+	//    VCO, the USB clock would have to come from HSI48 instead.)
 	RCC_OscInitTypeDef osc{};
 	osc.OscillatorType = RCC_OSCILLATORTYPE_NONE;
 	osc.PLL.PLLState = RCC_PLL_ON;
@@ -43,7 +47,7 @@ bool init()
 	osc.PLL.PLLM = 5;
 	osc.PLL.PLLN = rev_y ? 160 : 192;
 	osc.PLL.PLLP = 2;
-	osc.PLL.PLLQ = 4;
+	osc.PLL.PLLQ = 20;
 	osc.PLL.PLLR = 2;
 	osc.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;  // 4-8 MHz reference
 	osc.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;

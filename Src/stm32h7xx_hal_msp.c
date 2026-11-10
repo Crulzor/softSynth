@@ -1216,22 +1216,22 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
 }
 
 /**
-  * @brief PCD MSP Initialization
+  * @brief HCD MSP Initialization
   * This function configures the hardware resources used in this example
-  * @param hpcd: PCD handle pointer
+  * @param hhcd: HCD handle pointer
   * @retval None
   */
-void HAL_PCD_MspInit(PCD_HandleTypeDef* hpcd)
+void HAL_HCD_MspInit(HCD_HandleTypeDef* hhcd)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  if(hpcd->Instance==USB_OTG_FS)
+  if(hhcd->Instance==USB_OTG_FS)
   {
-    /* USER CODE BEGIN USB_OTG_FS_PCD_MspInit 0 */
+    /* USER CODE BEGIN USB_OTG_FS_HCD_MspInit 0 */
 
-    /* USER CODE END USB_OTG_FS_PCD_MspInit 0 */
+    /* USER CODE END USB_OTG_FS_HCD_MspInit 0 */
 
-  /** Initializes the peripherals clock
+  /** Initializes the peripherals clock (48 MHz from PLLQ, sysclock::init)
   */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USB;
     PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_PLL;
@@ -1240,21 +1240,11 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* hpcd)
       Error_Handler();
     }
 
-  /** Enable USB Voltage detector
-  */
-    HAL_PWREx_EnableUSBVoltageDetector();
-
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**USB_OTG_FS GPIO Configuration
-    PA9     ------> USB_OTG_FS_VBUS
     PA12     ------> USB_OTG_FS_DP
     PA11     ------> USB_OTG_FS_DM
     */
-    GPIO_InitStruct.Pin = VBUS_FS2_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(VBUS_FS2_GPIO_Port, &GPIO_InitStruct);
-
     GPIO_InitStruct.Pin = USB_OTG_FS2_P_Pin|USB_OTG_FS2_N_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -1264,40 +1254,44 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* hpcd)
 
     /* Peripheral clock enable */
     __HAL_RCC_USB_OTG_FS_CLK_ENABLE();
-    /* USER CODE BEGIN USB_OTG_FS_PCD_MspInit 1 */
 
-    /* USER CODE END USB_OTG_FS_PCD_MspInit 1 */
+    /* OTG_FS global interrupt: below the audio DMA's (5,0) - USB is
+       CPU-driven and must never preempt an audio block. */
+    HAL_NVIC_SetPriority(OTG_FS_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(OTG_FS_IRQn);
+    /* USER CODE BEGIN USB_OTG_FS_HCD_MspInit 1 */
+
+    /* USER CODE END USB_OTG_FS_HCD_MspInit 1 */
 
   }
 
 }
 
 /**
-  * @brief PCD MSP De-Initialization
+  * @brief HCD MSP De-Initialization
   * This function freeze the hardware resources used in this example
-  * @param hpcd: PCD handle pointer
+  * @param hhcd: HCD handle pointer
   * @retval None
   */
-void HAL_PCD_MspDeInit(PCD_HandleTypeDef* hpcd)
+void HAL_HCD_MspDeInit(HCD_HandleTypeDef* hhcd)
 {
-  if(hpcd->Instance==USB_OTG_FS)
+  if(hhcd->Instance==USB_OTG_FS)
   {
-    /* USER CODE BEGIN USB_OTG_FS_PCD_MspDeInit 0 */
+    /* USER CODE BEGIN USB_OTG_FS_HCD_MspDeInit 0 */
 
-    /* USER CODE END USB_OTG_FS_PCD_MspDeInit 0 */
+    /* USER CODE END USB_OTG_FS_HCD_MspDeInit 0 */
     /* Peripheral clock disable */
     __HAL_RCC_USB_OTG_FS_CLK_DISABLE();
 
     /**USB_OTG_FS GPIO Configuration
-    PA9     ------> USB_OTG_FS_VBUS
     PA12     ------> USB_OTG_FS_DP
     PA11     ------> USB_OTG_FS_DM
     */
-    HAL_GPIO_DeInit(GPIOA, VBUS_FS2_Pin|USB_OTG_FS2_P_Pin|USB_OTG_FS2_N_Pin);
+    HAL_GPIO_DeInit(GPIOA, USB_OTG_FS2_P_Pin|USB_OTG_FS2_N_Pin);
 
-    /* USER CODE BEGIN USB_OTG_FS_PCD_MspDeInit 1 */
+    /* USER CODE BEGIN USB_OTG_FS_HCD_MspDeInit 1 */
 
-    /* USER CODE END USB_OTG_FS_PCD_MspDeInit 1 */
+    /* USER CODE END USB_OTG_FS_HCD_MspDeInit 1 */
   }
 
 }

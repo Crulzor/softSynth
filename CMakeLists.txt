@@ -55,6 +55,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # HAL-free, also host-built + unit-tested under test/
     App/display_draw.cpp
     App/dsp/oscillator.cpp
+    App/midi/midi.cpp
     App/params/parameters.cpp
     App/sequencer/sequencer.cpp
     App/ui/widgets.cpp
@@ -72,16 +73,26 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/platform/i2c4.cpp
     App/platform/sysclock.cpp
     App/platform/touch.cpp
+    App/platform/usbhost.cpp
 
     # Vendored ST WM8994 codec driver (C)
     App/platform/wm8994/wm8994.c
     App/platform/wm8994/wm8994_reg.c
+
+    # Vendored ST USB Host Library (C) + our glue and MIDI class
+    App/platform/usbh/usbh_core.c
+    App/platform/usbh/usbh_ctlreq.c
+    App/platform/usbh/usbh_ioreq.c
+    App/platform/usbh/usbh_pipes.c
+    App/platform/usbh/usbh_conf.c
+    App/platform/usbh/usbh_midi.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     App
     App/platform
+    App/platform/usbh
 )
 
 # Add project symbols (macros)
