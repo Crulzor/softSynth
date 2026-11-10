@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// UI entry point for the foreground loop. Owns the five pages and the tab
+// UI entry point for the foreground loop. Owns the six pages and the tab
 // bar at the bottom of the screen: a press on the bar switches the current
 // page, everything else is routed to that page. Turns polled touch samples
 // into press / drag / release.
@@ -11,12 +11,14 @@
 
 #include <cstdint>
 
+#include "midi/link.hpp"
 #include "modulation/matrix.hpp"
 #include "params/parameters.hpp"
 #include "sequencer/pattern.hpp"
 #include "sequencer/sequencer.hpp"
 #include "ui/debug_page.hpp"
 #include "ui/env_page.hpp"
+#include "ui/midi_page.hpp"
 #include "ui/mod_page.hpp"
 #include "ui/osc_page.hpp"
 #include "ui/page.hpp"
@@ -61,8 +63,12 @@ public:
 		dbg_.set_cpu_load(average, peak);
 	}
 
+	// USB-MIDI link state for the MIDI page (from usbhost::link()).
+	void set_usb_link(const midi::Link& link) { midi_.set_link(link); }
+
 	// For tests.
 	int page() const { return page_; }
+	const MidiPage& midi() const { return midi_; }
 	const TabBar& bar() const { return bar_; }
 	const DebugPage& dbg() const { return dbg_; }
 
@@ -74,6 +80,7 @@ private:
 	EnvPage env_;
 	ModPage mod_;
 	SeqPage seq_;
+	MidiPage midi_;
 	DebugPage dbg_;
 	TabBar bar_;
 

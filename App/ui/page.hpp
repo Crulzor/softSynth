@@ -19,9 +19,9 @@ namespace ui
 inline constexpr int kPageW = 480;
 inline constexpr int kPageH = 246;  // 272 - 26 (tab bar)
 inline constexpr int kTabBarH = 26;
-inline constexpr int kNumPages = 5;
+inline constexpr int kNumPages = 6;
 inline constexpr const char* kPageNames[] = {"OSC", "ENV", "MOD", "SEQ",
-                                             "DBG"};
+                                             "MIDI", "DBG"};
 
 // Shared references passed to every page's constructor.
 struct Ctx

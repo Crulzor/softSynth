@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include "midi/midi.hpp"
 #include "ui/theme.hpp"
 #include "ui/ui.hpp"
 
@@ -122,7 +123,7 @@ struct Rig
 	{
 		ui.redraw_all();
 		// The tests edit the debug page: switch to its tab first.
-		frame(true, 216, 259);  // DBG tab, centre
+		frame(true, 264, 259);  // DBG tab, centre
 		frame(false, 0, 0);
 	}
 
@@ -348,7 +349,7 @@ TEST_CASE("the tempo slider follows the finger")
 TEST_CASE("tapping a tab switches the page")
 {
 	Rig r;
-	CHECK(r.ui.page() == 4);  // the rig starts on the DBG tab
+	CHECK(r.ui.page() == 5);  // the rig starts on the DBG tab
 	r.tap(24, 259);
 	CHECK(r.ui.page() == 0);
 	r.tap(72, 259);
@@ -358,7 +359,39 @@ TEST_CASE("tapping a tab switches the page")
 	r.tap(168, 259);
 	CHECK(r.ui.page() == 3);
 	r.tap(216, 259);
-	CHECK(r.ui.page() == 4);
+	CHECK(r.ui.page() == 4);  // MIDI
+	r.tap(264, 259);
+	CHECK(r.ui.page() == 5);  // DBG
+}
+
+TEST_CASE("the MIDI page shows the link state and the incoming notes")
+{
+	Rig r;
+	r.tap(216, 259);  // MIDI tab
+	REQUIRE(r.ui.page() == 4);
+	CHECK(r.ui.midi().shown_link().state == midi::LinkState::NoDevice);
+
+	midi::Link link;
+	link.state = midi::LinkState::Ready;
+	link.vid = 0x1C75;
+	link.pid = 0x0287;
+	r.ui.set_usb_link(link);
+	const std::uint32_t before = midi::parser().packets.load();
+	const std::uint8_t note_on[4] = {0x09, 0x92, 61, 100};  // C#4, ch 3
+	midi::parser().on_packet(note_on, 4);
+	r.frame(false);
+
+	CHECK(r.ui.midi().shown_link() == link);
+	CHECK(midi::Parser::active(r.ui.midi().shown_note_state()));
+	CHECK(midi::Parser::note(r.ui.midi().shown_note_state()) == 61);
+	CHECK(midi::Parser::channel(r.ui.midi().shown_note_state()) == 2);
+	CHECK(r.ui.midi().shown_packets() == before + 1);
+
+	// Release it again so other tests see an idle parser.
+	const std::uint8_t note_off[4] = {0x08, 0x82, 61, 0};
+	midi::parser().on_packet(note_off, 4);
+	r.frame(false);
+	CHECK_FALSE(midi::Parser::active(r.ui.midi().shown_note_state()));
 }
 
 TEST_CASE("the frame after a page switch repaints the stale buffer in full")

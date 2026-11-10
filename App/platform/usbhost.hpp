@@ -8,10 +8,17 @@
 // packets leave through the hook registered with USBH_MIDI_RegisterHook
 // (M2's parser attaches there).
 //
+// VBUS: the board does NOT supply 5 V on CN13 - the BeatStep Pro is powered
+// through its own data/power splitter, which also gives it the VBUS it needs
+// to connect. The board's CN13 power switch (PA5, OTG_FS2_PSO) is therefore
+// left off on purpose, so two 5 V sources can never meet on the cable.
+//
 // Supersedes the device-side App/platform/usbfs.{hpp,cpp}, kept in-tree as
 // reference.
 
 #pragma once
+
+#include "midi/link.hpp"
 
 namespace usbhost
 {
@@ -25,5 +32,9 @@ void init(void);
 // enumeration (including the blocking ~110 ms port reset) and the armed
 // bulk-IN. Foreground only - never from an ISR.
 void process(void);
+
+// The link as the MIDI page shows it. Foreground only (same context as
+// process()).
+midi::Link link(void);
 
 } // namespace usbhost

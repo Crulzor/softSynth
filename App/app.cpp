@@ -201,6 +201,7 @@ extern "C" void app_main()
 
 		// USB host: connect, enumeration and the armed bulk-IN.
 		usbhost::process();
+		g_ui.set_usb_link(usbhost::link());
 
 		const touch::Point p = touch::read();
 		display::begin_draw();

@@ -26,22 +26,26 @@ void Parser::on_packet(const std::uint8_t* buf, int len)
 void Parser::on_packet(Packet p)
 {
 	packets.fetch_add(1, std::memory_order_relaxed);
+	last_packet.store((std::uint32_t(p.b0) << 24) | (std::uint32_t(p.b1) << 16)
+	                      | (std::uint32_t(p.b2) << 8) | p.b3,
+	                  std::memory_order_relaxed);
 
-	// Top two bits of the cable code pick the packet type. Only 00 (8-bit)
-	// and 01 (14-bit) carry a status byte; 10/11 are data-only (sysex,
-	// running-status continuations) and are dropped whole.
-	const std::uint8_t type = p.b0 >> 6;
-	if(type > 1)
-	{
-		return;
-	}
-
+	// The Code Index Number (low nibble of b0) says what the packet carries;
+	// the cable number (high nibble) is ignored - a note on any cable plays.
+	// Only note-off (0x8) and note-on (0x9) are decoded, and the status byte
+	// must agree with the CIN, so sysex data or a malformed packet can never
+	// arm a voice.
+	const std::uint8_t cin = p.b0 & 0x0F;
 	const std::uint8_t status = p.b1;
 	const std::uint8_t d1 = p.b2;
 	const std::uint8_t d2 = p.b3;
 
 	const std::uint8_t cmd = status & 0xF0;
 	const std::uint8_t ch = status & 0x0F;
+	if((cin != 0x8 && cin != 0x9) || (cmd >> 4) != cin)
+	{
+		return;
+	}
 
 	bool note_on = false;
 	bool note_off = false;
@@ -60,8 +64,6 @@ void Parser::on_packet(Packet p)
 			note_on = true;
 		}
 	}
-	// 0xBn CC, 0xCn program, 0xDn channel pressure, 0xEA pitch bend, 0xFx
-	// system / real-time: ignored.
 
 	if(note_on)
 	{

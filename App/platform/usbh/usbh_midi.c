@@ -195,8 +195,16 @@ static USBH_StatusTypeDef MIDI_Process(USBH_HandleTypeDef *phost)
 				(void)USBH_BulkReceiveData(phost, midi_rx, midi_handle.mps, midi_handle.in_pipe);
 			}
 		}
-		/* URB_NOTREADY (device NAKing) / URB_IDLE / URB_ERROR: nothing to
-		 * do — the channel is armed and waiting. */
+		else if(urb == USBH_URB_ERROR)
+		{
+			/* Transaction errors beyond the HCD's retry count leave the
+			 * channel halted, not re-armed: arm it again, or MIDI input
+			 * would go silent until the next re-plug. (A disconnect also
+			 * lands here; the core then deinits the class.) */
+			(void)USBH_BulkReceiveData(phost, midi_rx, midi_handle.mps, midi_handle.in_pipe);
+		}
+		/* URB_NOTREADY (device NAKing) / URB_IDLE: nothing to do — the
+		 * channel is armed and waiting. */
 		break;
 
 	default:

@@ -26,10 +26,10 @@ std::uint32_t s(const Parser& p)
 
 }  // namespace
 
-TEST_CASE("an 8-bit note-on becomes the active voice")
+TEST_CASE("a note-on becomes the active voice")
 {
 	Parser p;
-	// b0 = 0x09: 8-bit USB cable packet, channel 0 note-on.
+	// b0 = 0x09: cable 0, CIN 0x9 (note-on); MIDI channel 0.
 	feed(p, 0x09, 0x90, 60, 64);
 	const std::uint32_t st = s(p);
 	CHECK(Parser::active(st));
@@ -38,10 +38,10 @@ TEST_CASE("an 8-bit note-on becomes the active voice")
 	CHECK(Parser::channel(st) == 0);
 }
 
-TEST_CASE("a 14-bit note-on is decoded the same way")
+TEST_CASE("a note-on on another virtual cable is decoded the same way")
 {
 	Parser p;
-	// b0 = 0x49: 14-bit USB cable packet, channel 3 note-on.
+	// b0 = 0x49: cable 4, CIN 0x9; MIDI channel 3.
 	feed(p, 0x49, 0x93, 48, 100);
 	const std::uint32_t st = s(p);
 	CHECK(Parser::active(st));
@@ -131,20 +131,36 @@ TEST_CASE("controller and program-change packets are ignored")
 	CHECK(Parser::active(after));
 }
 
-TEST_CASE("32-bit data packets (sysex, real-time) are dropped whole")
+TEST_CASE("sysex, real-time and mismatched packets never touch the voice")
 {
 	Parser p;
 	// A live voice first, so a mis-decode would be visible.
 	feed(p, 0x09, 0x90, 60, 64);
 	const std::uint32_t before = s(p);
-	// b0 top bits 11 = 32-bit: sysex bytes / system real-time on the cable.
-	feed(p, 0xFC, 0xF0, 0x00, 0x2A);
-	feed(p, 0xFC, 0x41, 0x00, 0xF7);
-	feed(p, 0xF8, 0xFE, 0x01, 0x00);  // system real-time
-	// A data-only 16-bit packet with a note-looking byte must not arm a voice.
-	feed(p, 0x84, 0x90, 60, 100);
+	feed(p, 0x04, 0xF0, 0x00, 0x2A);  // CIN 0x4: sysex start/continue
+	feed(p, 0x06, 0x41, 0xF7, 0x00);  // CIN 0x6: sysex ends with 2 bytes
+	feed(p, 0x0F, 0xF8, 0x00, 0x00);  // CIN 0xF: MIDI clock (single byte)
+	feed(p, 0x0F, 0xFE, 0x00, 0x00);  // CIN 0xF: active sensing
+	// Sysex data that happens to look like a note-on must not arm a voice:
+	// only the CIN decides.
+	feed(p, 0x84, 0x90, 61, 100);
+	// A CIN that disagrees with the status byte is malformed: ignored.
+	feed(p, 0x09, 0x80, 60, 0);
+	feed(p, 0x08, 0x91, 62, 100);
 	const std::uint32_t after = s(p);
 	CHECK(before == after);
+}
+
+TEST_CASE("the last packet is kept raw for the bring-up read-out")
+{
+	Parser p;
+	CHECK(p.last_packet.load() == 0);
+	feed(p, 0x0F, 0xF8, 0x00, 0x00);
+	CHECK(p.last_packet.load() == 0x0FF80000u);
+	feed(p, 0x19, 0x92, 64, 127);  // cable 1 note-on, channel 2
+	CHECK(p.last_packet.load() == 0x1992407Fu);
+	CHECK(Parser::active(s(p)));
+	CHECK(Parser::channel(s(p)) == 2);
 }
 
 TEST_CASE("a channel-15 note is tracked with its channel")

@@ -37,8 +37,11 @@
 #define USBH_IN_NAK_PROCESS           0
 #define USBH_DEBUG_LEVEL              0
 
-/* The board's OTG_FS port is full speed only. */
+/* Host instance ids passed to USBH_Init (a label the core stores in
+ * phost->id; USBH_LL_Init here always drives OTG_FS). The board's OTG_FS
+ * port is full speed only, so usbhost.cpp uses HOST_FS. */
 #define HOST_HS                       0
+#define HOST_FS                       1
 
 /* Memory management macros. The core never allocates (the MIDI class
  * is a static struct); the copy/set macros are used by USBH_Init. */

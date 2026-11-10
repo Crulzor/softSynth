@@ -7,19 +7,20 @@
 // interrupt and the MIDI page each read as one word. No HAL: it compiles under
 // the host build for test/, exactly like the rest of the pure DSP core.
 //
-// A cable packet is four bytes off the wire:
-//   b0  cable code; its top two bits pick the packet type
-//       (00 = 8-bit, 01 = 14-bit, 10 = 16-bit, 11 = 32-bit)
-//   b1  status byte (8/14-bit) or first data byte (16/32-bit)
+// A USB-MIDI 1.0 event packet is four bytes off the wire:
+//   b0  high nibble = virtual cable number (0..15),
+//       low nibble  = Code Index Number (CIN): what the packet carries
+//       (0x8 note-off, 0x9 note-on, 0xB control change, 0x4..0x7 sysex,
+//       0xF single byte / real-time, ...)
+//   b1  MIDI status byte (for channel-voice CINs) or data
 //   b2  data1
 //   b3  data2
 //
-// Policy: NOTE_ON / NOTE_OFF update the note state; a vel-0 NOTE_ON is a
-// NOTE_OFF. CC, program change, aftertouch, pitch bend, sysex and system
-// real-time are ignored. Only 8-bit and 14-bit packets carry a status byte,
-// and those are the only ones decoded: 16/32-bit packets are data-only (sysex,
-// running-status continuations) and a note controller sends channel voice with
-// the status in every packet, so they are dropped whole.
+// Policy: NOTE_ON / NOTE_OFF (CIN 0x9 / 0x8, on any cable) update the note
+// state; a vel-0 NOTE_ON is a NOTE_OFF. Everything else - CC, program change,
+// aftertouch, pitch bend, sysex (whose data bytes never decode as notes
+// because only the CIN decides) and system real-time such as MIDI clock - is
+// counted but ignored.
 
 #pragma once
 
@@ -29,7 +30,7 @@
 namespace midi
 {
 
-// One 4-byte USB-MIDI cable packet as it comes off the wire.
+// One 4-byte USB-MIDI event packet as it comes off the wire.
 struct Packet
 {
 	std::uint8_t b0;
@@ -49,6 +50,9 @@ class Parser
 public:
 	std::atomic<std::uint32_t> note_state{0};
 	std::atomic<std::uint32_t> packets{0};  // complete 4-byte packets parsed
+	// The last packet seen, b0 in the top byte down to b3 in the bottom one;
+	// a raw read-out for USB bring-up (the MIDI page shows it as hex).
+	std::atomic<std::uint32_t> last_packet{0};
 
 	// Parse one bulk-IN chunk: every complete 4-byte packet in the first
 	// `len` bytes of `buf` is fed to on_packet(Packet).

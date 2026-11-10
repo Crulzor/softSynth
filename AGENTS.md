@@ -221,21 +221,40 @@ the `.framebuffer`, not data). Flashed to the board 2026-11-10
 readout until the MIDI tab lands, so "works" = a tone out of the WM8994
 when a key is played.
 
+**Done 2026-11-10 (evening, flashed)** — "finish MIDI" pass before bring-up:
+- **MIDI tab** (`App/ui/midi_page.{hpp,cpp}`): 6th tab, order OSC, ENV, MOD,
+  SEQ, **MIDI**, DBG (DBG is now index 5; tabs stay 48 px wide). Read-only:
+  link state (NO DEVICE / ENUMERATING / READY / NOT A MIDI DEVICE), DEVICE
+  VID:PID, raw `HOST <gState> / ENUM <EnumState>` + control-error count, the
+  held note (name, velocity, channel 1-based), packet counter and the last raw
+  packet in hex. Link state comes from `usbhost::link()` → `Ui::set_usb_link()`
+  each frame (`midi/link.hpp` is HAL-free); notes/counters are read straight
+  from `midi::parser()`. `render_ui` writes `ui_midi.ppm`.
+- **Crash fix**: `USBH_Init` was given a NULL user callback, but the vendored
+  core calls `pUser` unguarded on `HOST_USER_CLASS_SELECTED` (usbh_core.c) and
+  `HOST_USER_UNRECOVERED_ERROR` (usbh_ctlreq.c) → HardFault the moment the
+  BeatStep finished enumerating. `usbhost.cpp` now registers `user_event`
+  (counts unrecovered errors). Host id is `HOST_FS` (defined in usbh_conf.h).
+- **Parser** decodes by USB-MIDI 1.0 CIN (`b0` low nibble; high nibble = cable,
+  any cable plays) instead of the made-up "b0>>6 packet type"; status must match
+  the CIN. Adds `last_packet` (raw). Tests updated (52/52).
+- **usbh_midi**: bulk-IN re-armed on `URB_ERROR` too (it used to go silent).
+- **VBUS decided**: the board does NOT power CN13. The BeatStep is powered (and
+  sees VBUS) through its own data/power splitter; PA5 (`OTG_FS2_PSO`, the CN13
+  power switch, active high in ST's H750B-DK example) stays an input/off on
+  purpose so two 5 V sources never meet.
+- Flash 109068 B (83.2 %), DTCM 8.6 KB.
+
 **Remaining, in order**
-1. **Hardware bring-up** (needs the board): board on CNI4, BeatStep on
-   CN13, play a note → tone. If enumeration never completes, suspect
-   PCDET/VBUS on the no-VBUS cable first: fallback `USB_DriveVbus
-   (USB_OTG_FS, 1)` + poll for connect (see the open question below).
-2. **MIDI tab** (UI, deferred to last by Bart): 6th tab "MIDI" at index 4 —
-   OSC, ENV, MOD, SEQ, MIDI, DBG (DBG becomes 5). Readout of ch/note/vel +
-   the packet counter from `midi::parser()`. Touch points: `kNumPages` /
-   `kPageNames` in `page.hpp` (5→6); `kTabW` in `widgets.{hpp,cpp}`
-   (96→80, 480/6); the page array in `ui.{hpp,cpp}`; new
-   `App/ui/midi_page.{hpp,cpp}`; `test/test_ui.cpp` tab taps (currently
-   24/72/120/168/216 @ y=259 for 5×96 → 6×80 centres 40/120/200/280/360/440)
-   and the Rig's default page (DBG is index 4 today, becomes 5);
-   `ui_midi.ppm` in `test/render_ui.cpp`.
-3. **Docs**: `ARCHITECTURE.md` §2 → USB-MIDI host-mode, README milestone note.
+1. **Hardware bring-up** (board on CNI4, BeatStep on CN13 via its splitter):
+   open the MIDI tab. Expect NO DEVICE → ENUMERATING → READY with an Arturia
+   VID (0x1C75), then notes/PACKETS moving when keys are played, and a tone
+   from the WM8994. If it sticks in ENUMERATING, note the HOST/ENUM numbers
+   (`HOST_*` / `ENUM_*` enums in `usbh_def.h`). NOT A MIDI DEVICE = no
+   MIDIStreaming interface found — first suspect `USBH_MAX_NUM_INTERFACES 2`
+   (raise it if the BeatStep exposes more interfaces). MIDI clock from the
+   BeatStep makes PACKETS count continuously — that alone proves the data path.
+2. **Docs**: `ARCHITECTURE.md` §2 → USB-MIDI host-mode, README milestone note.
 
 **FORK — decided: A (vendor ST USBH), chosen by Bart 2026-11-10**
 - **A. Vendor ST USBH (chosen 2026-11-10)**: the complete ST USB Host Library is on disk
@@ -318,11 +337,8 @@ PA9 = VBUS sense, **no OTG ID pin on the board** (PA10's `USB_OTG_FS2_ID`
 label is a leftover), PH11 is a plain `GPXTI11` GPIO (overcurrent not wired
 to the OTG core).
 
-**Open bring-up question (does not gate coding)**: the BeatStep is self-powered and
-the CN13 cable may carry **no VBUS**. Host connect detection reads HPRT0 (PPWR/PCDET
-path). If `PCDET` never asserts without VBUS on the cable, force the port powered via
-`USBH_LL_DriverVBUS` → `USB_DriveVbus(USB_OTG_FS, 1)` and poll for connect. The NUCLEO-H723ZG
-`USB Host` example on disk shows the canonical init for this exact core.
+**VBUS (resolved 2026-11-10)**: no VBUS from the board — see "Done 2026-11-10
+(evening)" above.
 
 **Committed 2026-11-10** (everything in "What landed"): `App/app.cpp`,
 `App/platform/sysclock.cpp`, `App/midi/`, `App/platform/usbh/`,

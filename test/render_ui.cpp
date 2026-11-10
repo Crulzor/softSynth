@@ -6,7 +6,7 @@
 //
 //   ./render_ui [prefix]
 //
-// Writes <prefix>_{osc,env,mod,seq,dbg,picker}.ppm (default prefix "ui").
+// Writes <prefix>_{osc,env,mod,seq,midi,dbg,picker}.ppm (default prefix "ui").
 // Convert with e.g. `magick ui_seq.ppm ui_seq.png`.
 #include <cstdio>
 #include <string>
@@ -107,8 +107,10 @@ int main(int argc, char** argv)
 	frame(false, 0, 0);
 	shot("picker");
 
-	tab(4);
+	tab(5);
 	shot("dbg");
+	tab(4);
+	shot("midi");
 	tab(0);
 	shot("osc");
 	tab(1);
@@ -122,7 +124,7 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	std::printf(
-	    "render_ui: wrote %s_{osc,env,mod,seq,dbg,picker}.ppm\n",
+	    "render_ui: wrote %s_{osc,env,mod,seq,midi,dbg,picker}.ppm\n",
 	    prefix.c_str());
 	return 0;
 }

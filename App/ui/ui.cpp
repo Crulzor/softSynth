@@ -11,6 +11,7 @@ Ui::Ui(params::Parameters& params, sequencer::Pattern& pattern,
       env_(ctx_),
       mod_(ctx_),
       seq_(ctx_),
+      midi_(ctx_),
       dbg_(ctx_),
       bar_(Rect{0, kPageH, kPageW, kTabBarH}, kNumPages, kPageNames,
            transport)
@@ -19,7 +20,8 @@ Ui::Ui(params::Parameters& params, sequencer::Pattern& pattern,
 	pages_[1] = &env_;
 	pages_[2] = &mod_;
 	pages_[3] = &seq_;
-	pages_[4] = &dbg_;
+	pages_[4] = &midi_;
+	pages_[5] = &dbg_;
 }
 
 void Ui::switch_page(int i)
