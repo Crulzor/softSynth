@@ -21,7 +21,9 @@ kept current. This file is only the working context the docs can't express.
   (`App/display.cpp` `HAL_LTDC_LineEventCallback`), so an idle screen keeps
   scanning the last complete frame instead of alternating with a stale
   buffer. Foreground draw passes are wrapped in `display::begin_draw()` /
-  `end_draw()` (which also mask the swap and set `g_in_draw`).
+  `end_draw()`, which only set/clear `g_in_draw` — the line interrupt stays
+  armed (masking it raced the LTDC and livelocked the IRQ after minutes, fixed
+  2026-11-10, `docs/ltdc-lie-race.md`).
   **Convergence**: the drawing calls also track the bounding box of pixels
   written since the last promotion (`display::detail::g_box_*`), and
   `swap_buffers()` calls `detail::flush_box()` after the exchange, copying

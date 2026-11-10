@@ -62,9 +62,10 @@ void swap_buffers();
 void enable_swap_irq();
 
 // Call around each foreground draw pass. begin_draw() marks the pass in
-// progress and masks the frame-swap event so a flip can't land in the middle
-// of a widget being drawn (at most one frame boundary is missed); end_draw()
-// drops the line event that may have pended while masked and re-arms it.
+// progress so a frame boundary inside it defers the flip instead of promoting
+// a half-drawn frame (at most one boundary is missed); end_draw() clears the
+// mark. The line interrupt stays armed throughout — masking it raced the LTDC
+// and could livelock the IRQ (docs/ltdc-lie-race.md).
 void begin_draw();
 void end_draw();
 

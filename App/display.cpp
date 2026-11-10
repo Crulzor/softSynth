@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "display.hpp"
 
+#include <atomic>
+
 extern "C"
 {
 #include "main.h"  // HAL + CubeMX-generated pin labels (LCD_*_Pin / _GPIO_Port)
@@ -195,25 +197,23 @@ void enable_swap_irq()
 
 void begin_draw()
 {
-	// Flag the pass before masking so a boundary event that races the start of
-	// the pass sees it and defers; then mask the frame-swap event so it can't
-	// land in the middle of a widget draw (at most one frame boundary is
-	// missed).
+	// Mark the pass; the line-event callback sees the flag and defers the flip
+	// to a later boundary instead of promoting a half-drawn frame. The line
+	// interrupt itself stays armed. Masking it here (clearing LIE) raced the
+	// LTDC: a line-0 request latched while LIE was still set but serviced after
+	// the mask landed was skipped by HAL_LTDC_IRQHandler (it only clears LIF
+	// when LIE is set), so LIF stayed set and the IRQ re-entered forever,
+	// starving this loop (docs/ltdc-lie-race.md).
 	detail::g_in_draw = 1;
-	__HAL_LTDC_DISABLE_IT(&g_ltdc, LTDC_IT_LI);
+	// Keep the compiler from hoisting framebuffer writes above the flag.
+	std::atomic_signal_fence(std::memory_order_seq_cst);
 }
 
 void end_draw()
 {
-	// Drop the line event that may have pended while masked, so the next swap
-	// lands on a clean frame boundary.
-	if((g_ltdc.Instance->ISR & LTDC_ISR_LIF) != 0)
-	{
-		__HAL_LTDC_CLEAR_FLAG(&g_ltdc, LTDC_FLAG_LI);
-	}
-	HAL_LTDC_ProgramLineEvent(&g_ltdc, 0);
-	// The pass is done last: a boundary event fired by the re-arm above sees a
-	// complete frame.
+	// Every pixel of the pass is written before the flag drops, so a boundary
+	// event that sees g_in_draw == 0 promotes a complete frame.
+	std::atomic_signal_fence(std::memory_order_seq_cst);
 	detail::g_in_draw = 0;
 }
 
@@ -233,7 +233,7 @@ void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef* hltdc)
 	// panel keeps scanning the last complete frame, so a retained-mode UI
 	// (which redraws only invalidated widgets) never alternates between a
 	// fresh buffer and a stale one. The in_draw check defers to the next
-	// boundary if a frame is still being drawn (the event raced begin_draw).
+	// boundary if the boundary fell inside a foreground draw pass.
 	if(detail::g_dirty && !detail::g_in_draw)
 	{
 		detail::g_dirty = 0;
