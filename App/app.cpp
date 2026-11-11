@@ -27,6 +27,7 @@
 
 #include "display.hpp"
 #include "dsp/engine.hpp"
+#include "dsp/fx.hpp"
 #include "dsp/ladder.hpp"
 #include "dsp/sine_table.hpp"
 #include "midi/midi.hpp"
@@ -94,8 +95,18 @@ sequencer::Transport g_transport;
 sequencer::Sequencer g_sequencer(static_cast<float>(audio_out::kSampleRate));
 ui::Ui g_ui(g_params, g_pattern, g_transport, g_matrix, g_waves);
 
+// The delay lines: 1 s per channel, 16-bit, 192 KB in all - too big for
+// DTCM, so they live in the 288 KB of D2 RAM next to the audio DMA buffers
+// (the .dma_buffer section: NOLOAD, so Effects::init() clears them). The
+// D2 SRAM bank clocks are switched on in app_main().
+constexpr int kDelayLength = 48000;
+__attribute__((section(".dma_buffer"))) int16_t g_delay_l[kDelayLength];
+__attribute__((section(".dma_buffer"))) int16_t g_delay_r[kDelayLength];
+
 // Audio-interrupt state.
 dsp::Engine g_engine;
+dsp::Effects g_fx;  // reverb + mod FX lines: ~70 KB of DTCM
+dsp::FxParams g_fx_params;
 sequencer::Player g_player;
 dsp::Patch g_patch;
 sequencer::ExtClock g_ext_clock(static_cast<float>(audio_out::kSampleRate));
@@ -105,7 +116,7 @@ int g_clock_src = 0;                 // last block's ClockSource
 
 // Copy the UI-side model into the engine's patch: one consistent snapshot
 // per block. Every field is a word the UI writes atomically.
-void fill_patch(dsp::Patch& p)
+DSP_HOT void fill_patch(dsp::Patch& p)
 {
 	using params::Id;
 	const params::Parameters& q = g_params;
@@ -147,6 +158,48 @@ void fill_patch(dsp::Patch& p)
 	}
 }
 
+// The FX page's parameters as the effects take them, once per block (after
+// the clock, so synced times follow the current tempo / song position).
+DSP_HOT void fill_fx(dsp::FxParams& f)
+{
+	using params::Id;
+	const params::Parameters& q = g_params;
+	auto index = [&](Id id, int count)
+	{
+		const int i = static_cast<int>(q.get(id));
+		return i < 0 ? 0 : (i >= count ? count - 1 : i);
+	};
+	f.mod.type = static_cast<dsp::ModFxType>(
+	    index(Id::ModFxType, static_cast<int>(dsp::ModFxType::Count)));
+	f.mod.sync = q.get(Id::ModFxMode) > 0.5f;
+	f.mod.rate = q.get(Id::ModFxRate);
+	f.mod.div_steps = dsp::kLfoDivSteps[index(Id::ModFxDiv, dsp::kLfoDivCount)];
+	f.mod.bpm = g_patch.tempo_bpm;
+	f.mod.song_pos = g_patch.seq_pos;
+	f.mod.depth = q.get(Id::ModFxDepth);
+	f.mod.feedback = q.get(Id::ModFxFeedback);
+	f.mod_mix = q.get(Id::ModFxMix);
+
+	if(q.get(Id::DelayMode) > 0.5f)
+	{
+		const float steps =
+		    dsp::kDelayDivSteps[index(Id::DelayDiv, dsp::kDelayDivCount)];
+		f.delay.seconds = steps * 15.0f / g_patch.tempo_bpm;  // 16ths
+	}
+	else
+	{
+		f.delay.seconds = q.get(Id::DelayTime) * 0.001f;
+	}
+	f.delay.feedback = q.get(Id::DelayFeedback);
+	f.delay.tone = q.get(Id::DelayTone);
+	f.delay.ping = q.get(Id::DelayStereo) > 0.5f;
+	f.delay_mix = q.get(Id::DelayMix);
+
+	f.reverb.decay = q.get(Id::ReverbDecay);
+	f.reverb.damp = q.get(Id::ReverbDamp);
+	f.reverb_mix = q.get(Id::ReverbMix);
+}
+
 inline int16_t to_i16(float s)
 {
 	// Master soft clip: linear for normal levels, rounding off the peaks
@@ -156,7 +209,7 @@ inline int16_t to_i16(float s)
 
 // One block of at most dsp::kBlockSize frames: MIDI events, then the
 // sequencer clock (internal, or the clock input in `in`), then the engine.
-void render_block(int16_t* out, const int16_t* in, int n)
+DSP_HOT void render_block(int16_t* out, const int16_t* in, int n)
 {
 
 	fill_patch(g_patch);
@@ -271,18 +324,22 @@ void render_block(int16_t* out, const int16_t* in, int n)
 	                 g_engine.live_mix(), g_engine.live_pw(0),
 	                 g_engine.live_pw(1));
 
+	// Effects: mono voices in, stereo out.
+	fill_fx(g_fx_params);
+	float left[dsp::kBlockSize];
+	float right[dsp::kBlockSize];
+	g_fx.process(g_fx_params, buf, left, right, n);
 	for(int i = 0; i < n; ++i)
 	{
-		const int16_t v = to_i16(buf[i]);
-		out[2 * i] = v;
-		out[2 * i + 1] = v;
+		out[2 * i] = to_i16(left[i]);
+		out[2 * i + 1] = to_i16(right[i]);
 	}
 }
 
 // DMA callback, ISR context: render `frames` interleaved stereo frames into
 // `out`. Normally one half-buffer (kBlockSize frames), but audio_out::start()
 // pre-fills the whole double buffer in one call, so it is cut into blocks.
-void audio_callback(int16_t* out, const int16_t* in, uint32_t frames)
+DSP_HOT void audio_callback(int16_t* out, const int16_t* in, uint32_t frames)
 {
 	const uint32_t start = cpu_load::begin();
 	while(frames > 0)
@@ -332,8 +389,26 @@ extern "C" void app_main()
 	// Bring up the audio path: accurate 48 kHz SAI clock, SAI2 + DMA, then the
 	// WM8994 codec over I2C. MCLK must be running (audio_out::init) before the
 	// codec inits, so the order matters.
-	// The oscillators' sine table must be filled before the first block.
+	// The oscillators' sine table must be filled before the first block,
+	// and the effects' lines cleared - the delay's in D2 RAM, whose bank
+	// clocks have to be on first.
 	dsp::sine_table::init();
+	// The per-sample code (DSP_HOT) runs from ITCM: copy it there from its
+	// load image in flash before the first audio block.
+	{
+		extern uint32_t _sitcm;
+		extern uint32_t _eitcm;
+		extern uint32_t _siitcm;
+		const uint32_t* src = &_siitcm;
+		for(uint32_t* dst = &_sitcm; dst < &_eitcm;)
+		{
+			*dst++ = *src++;
+		}
+	}
+	__HAL_RCC_D2SRAM1_CLK_ENABLE();
+	__HAL_RCC_D2SRAM2_CLK_ENABLE();
+	__HAL_RCC_D2SRAM3_CLK_ENABLE();
+	g_fx.init(g_delay_l, g_delay_r, kDelayLength);
 	const bool audio_ok =
 	    audio_out::init() && codec::init(audio_out::kSampleRate, 70);
 	const bool touch_ok = touch::init();
@@ -360,7 +435,6 @@ extern "C" void app_main()
 	display::enable_swap_irq();
 
 	g_ui.set_status(init_status(clock_ok, audio_ok, touch_ok));
-	g_ui.set_cpu_mhz(static_cast<int>(sysclock::cpu_hz() / 1000000));
 
 	bool was_ready = false;
 	for(uint32_t frame = 1;; ++frame)

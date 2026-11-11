@@ -13,20 +13,20 @@ Ui::Ui(params::Parameters& params, sequencer::Pattern& pattern,
       osc_(ctx_),
       env_(ctx_),
       mod_(ctx_),
+      fx_(ctx_),
       seq_(ctx_),
       sync_(ctx_),
       midi_(ctx_),
-      dbg_(ctx_),
       bar_(Rect{0, kPageH, kPageW, kTabBarH}, kNumPages, kPageNames,
 	       kPageAccents, transport, pattern, params)
 {
 	pages_[0] = &osc_;
 	pages_[1] = &env_;
 	pages_[2] = &mod_;
-	pages_[3] = &seq_;
-	pages_[4] = &sync_;
-	pages_[5] = &midi_;
-	pages_[6] = &dbg_;
+	pages_[kFxTab] = &fx_;
+	pages_[kSeqTab] = &seq_;
+	pages_[kSyncTab] = &sync_;
+	pages_[kMidiTab] = &midi_;
 }
 
 // The MIDI tab's LED: off with nothing attached, amber while enumerating,

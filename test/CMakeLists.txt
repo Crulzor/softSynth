@@ -27,10 +27,14 @@ set(APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../App)
 # Pure DSP sources, shared by the firmware and by these host tools.
 add_library(dsp STATIC
     ${APP_DIR}/dsp/additive_osc.cpp
+    ${APP_DIR}/dsp/delay.cpp
     ${APP_DIR}/dsp/engine.cpp
     ${APP_DIR}/dsp/envelope.cpp
+    ${APP_DIR}/dsp/fx.cpp
     ${APP_DIR}/dsp/ladder.cpp
     ${APP_DIR}/dsp/lfo.cpp
+    ${APP_DIR}/dsp/modfx.cpp
+    ${APP_DIR}/dsp/reverb.cpp
     ${APP_DIR}/dsp/sine_table.cpp
     ${APP_DIR}/dsp/spectrum.cpp
     ${APP_DIR}/dsp/voice.cpp
@@ -50,7 +54,7 @@ add_library(ui STATIC
     ${APP_DIR}/params/parameters.cpp
     ${APP_DIR}/params/wave_slots.cpp
     ${APP_DIR}/ui/widgets.cpp
-    ${APP_DIR}/ui/debug_page.cpp
+    ${APP_DIR}/ui/fx_page.cpp
     ${APP_DIR}/ui/midi_page.cpp
     ${APP_DIR}/ui/env_page.cpp
     ${APP_DIR}/ui/mod_page.cpp

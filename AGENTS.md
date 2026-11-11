@@ -57,8 +57,10 @@ kept current. This file is only the working context the docs can't express.
   `App/` that the host build compiles must keep the host build green:
   `cmake -S test -B test/build && cmake --build test/build &&
   ctest --test-dir test/build` plus `render_wav` / `render_ui` for
-  audio/visual checks. Firmware build: `cmake --preset Debug &&
-  cmake --build build/Debug`. Flash with `STM32_Programmer_CLI` (see README).
+  audio/visual checks. Firmware build: **`cmake --preset Release &&
+  cmake --build build/Release`** (Release is what goes on the board since
+  2026-11-11 - Debug overflows the flash). Flash with `STM32_Programmer_CLI`
+  (see README).
 - Audio path: nothing blocking, no allocation, no virtuals. Foreground only
   touches things the ISR reads as atomic word-sized fields.
 - CubeMX regenerate overwrites `Src/`, `Inc/`, the `.ioc` and the linker script;
@@ -579,3 +581,42 @@ both osc params independent from each other".
   `dsp::sum_routes()` + `osc_mod()` shared by Voice and the live values).
   Kept the "both" ones on purpose (one row of vibrato for both oscs).
 - Tests 120/120. Flash 95.2 %.
+
+## Done: FX page (MOD FX, delay, reverb), Release build, DBG removed (2026-11-11)
+
+Bart: "commit and then do an fx page with delay and reverb", then "can we add
+a phaser/flanger" (yes), then "switch to release, also you can get rid of
+the dbg page".
+- **DSP** (`App/dsp/`): `modfx` (phaser: 6 allpass stages, coefficient ramped
+  per block; flanger 1-6 ms / chorus 10-25 ms swept delay; L/R LFO 90 deg
+  apart; FREE or SYNC like the LFOs), `delay` (stereo MONO / PING, tone LP
+  + tanh in the feedback, 50 ms time glide = tape bend, 16-bit lines of 1 s
+  in RAM_D2 via `.dma_buffer`, cleared at init), `reverb` (Dattorro plate,
+  Mutable FxEngine-style single 32k 16-bit buffer + one write head, **tank
+  at half rate** 24 kHz at Dattorro's designed size), `fx` (`Effects`:
+  dry -> MOD FX -> delay of the mid -> reverb, send-style MIX; an effect at
+  MIX 0 is not processed and restarts from clean lines when turned up).
+- **Gotcha found**: any non-zero default member initializer in a class
+  holding big buffers makes the global constant-initialised -> `.data` ->
+  a 70 KB image in flash (Release went to 173 KB). Keep those classes'
+  defaults zero (`init()` sets the real values); Lfo's RNG now seeds lazily.
+- **Release** is the board build: `-g3` kept, DSP `-O2`, rest `-Os`. Flash
+  102.7 KB (78 %). Touch / I2C, 48 kHz rate (47,989 Hz) re-checked on it.
+- **ITCM**: `DSP_HOT` (dsp_config.hpp) puts the per-sample functions in
+  `.itcm_text` (linker script addition, copied in `app_main()`). Reason: with
+  the D-cache off, float constants in flash literal pools are uncached loads
+  (the reverb step had 27). Reverb 7.6 % -> 4.9 %; voices unchanged.
+- **CPU, measured** (cpu_load over SWD): idle 4.2 %; phaser +3.1 %, delay
+  +3.3 %, reverb +4.9 %; 6 voices all harmonics 59.7 % -> with all three FX
+  **71.8 %**.
+- Params: ModFx{Type,Mode,Rate,Div,Depth,Feedback,Mix}, Delay{Mode,Time(ms),
+  Div,Feedback,Tone,Stereo,Mix}, Reverb{Decay,Damp,Mix}. All MIX default 0.
+- UI: **FX tab** (index 3, lime) - rows MOD FX / DELAY / REVERB, the time
+  knob swaps FREE <-> SYNC like the MOD page. **DBG page deleted**; tabs are
+  OSC ENV MOD FX SEQ SYNC MIDI (`kFxTab` 3, `kSeqTab` 4, `kSyncTab` 5,
+  `kMidiTab` 6). The UI test rig now starts on SEQ; the grid / picker /
+  note-box tests run on the SEQ page. `EnumButton` text never exceeds its
+  cell (falls back to scale 1). Tests 127/127.
+- Next levers if CPU gets tight: enable the D-cache (needs cache
+  maintenance for the framebuffers / DMA buffers), phaser tanh via the
+  ladder's table, delay lines can't move to faster RAM (192 KB).

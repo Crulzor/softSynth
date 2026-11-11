@@ -90,11 +90,13 @@ class Lfo
    private:
 	void new_level();
 
+	// All zero by default, so objects holding an Lfo can be zero-initialised
+	// (.bss); new_level() seeds the generator on first use.
 	float phase_ = 0.0f;
 	float value_ = 0.0f;
 	float held_ = 0.0f;
-	std::int32_t cycle_ = -1;  // synced cycle index, for S&H
-	std::uint32_t rng_ = 0x6C078965u;
+	std::int32_t cycle_ = 0;  // synced cycle index, for S&H
+	std::uint32_t rng_ = 0;
 };
 
 }  // namespace dsp

@@ -39,7 +39,7 @@ void Voice::note_on(std::uint8_t note, float velocity, std::uint8_t tag,
 	env_.gate_on();
 }
 
-void Voice::render(const BlockCtl& ctl, Sample* out, Sample* scratch, int n)
+DSP_HOT void Voice::render(const BlockCtl& ctl, Sample* out, Sample* scratch, int n)
 {
 	const Patch& p = *ctl.patch;
 

@@ -11,6 +11,16 @@
 // for wiring a engine built at this rate to an audio_out running at the same.
 #pragma once
 
+// Marks the audio interrupt's per-sample functions: on the board they are
+// linked into ITCM (zero-wait instruction RAM, see the linker script's
+// .itcm_text and app_main()), so neither their code nor their literal pools
+// (the float constants) are fetched from flash. Nothing on the host.
+#if defined(__arm__)
+#define DSP_HOT __attribute__((section(".itcm_text")))
+#else
+#define DSP_HOT
+#endif
+
 namespace dsp
 {
 

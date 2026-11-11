@@ -9,7 +9,9 @@ synth itself: a **6-voice** engine with two **additive oscillators** per voice
 (32-harmonic Fourier series; basic waves plus random shapes in two slots, with
 SHP morphing between them), a nonlinear **Moog-style ladder filter**, ADSR,
 two LFOs and a modulation matrix — played polyphonically from USB-MIDI and
-from a 16-step sequencer with **chords** and **ties**, which can follow a
+from a 16-step sequencer with **chords** and **ties**, through an **FX**
+section (phaser / flanger / chorus, stereo delay, plate reverb); the sequencer
+can follow a
 **modular clock** on the audio input (left = clock, right = reset; line
 level — attenuate 5–10 V gates first). The firmware follows the
 structure of Émilie Gillet's Mutable Instruments modules: the audio interrupt is
@@ -44,11 +46,15 @@ the main loop. See `ARCHITECTURE.md` for the design and roadmap.
 ## Build
 
 ```sh
-cmake --preset Debug
-cmake --build build/Debug
+cmake --preset Release
+cmake --build build/Release
 ```
 
-Output: `build/Debug/softSynth.elf`.
+Output: `build/Release/softSynth.elf` — **Release is the build that goes on
+the board** (the Debug preset no longer fits the 128 KB flash). It keeps
+full debug info in the `.elf` (not in flash), so stepping through it works;
+the per-sample DSP is `-O2`, everything else `-Os`, and the audio
+interrupt's hot code runs from ITCM (see "Manual changes" 5).
 
 ## Host tests
 
@@ -66,11 +72,11 @@ ctest --test-dir test/build --output-on-failure   # DSP, parameter + UI tests
 ## Flash
 
 ```sh
-STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/softSynth.elf -v -rst
+STM32_Programmer_CLI -c port=SWD mode=UR -w build/Release/softSynth.elf -v -rst
 ```
 
 After flashing: the LCD opens on the OSC page, with a tab bar along the
-bottom (OSC, ENV, MOD, SEQ, MIDI, DBG) and a status strip showing transport,
+bottom (OSC, ENV, MOD, FX, SEQ, SYNC, MIDI) and a status strip showing transport,
 tempo, step pips and the audio-interrupt load (`CPU nn%`). Keys on a USB-MIDI
 keyboard on CN13 play the synth (6 voices); play on the SEQ page runs the
 pattern through it, chords and ties included; on the SYNC page it can follow
@@ -112,6 +118,11 @@ CubeMX — re-apply them):
    `HAL_SAI_Init()`. `audio_out` undoes that after its inits (fixed MCKDIV,
    mux back to PLL2) — if SAI init code moves, keep that order, or the audio
    drops to 46.875 kHz (41 cents flat).
+
+5. **`STM32H750XX_FLASH.ld`** — an `.itcm_text` section (ITCMRAM, load
+   image in FLASH, symbols `_sitcm` / `_eitcm` / `_siitcm`) for the
+   functions marked `DSP_HOT`; `app_main()` copies it before audio starts.
+   The delay lines also live in the existing `.dma_buffer` (RAM_D2) section.
 
 The CPU clock is **not** set in `main.c` either: the generated
 `SystemClock_Config()` leaves the core at 64 MHz, and `App/platform/sysclock`

@@ -6,7 +6,7 @@
 //
 //   ./render_ui [prefix]
 //
-// Writes <prefix>_{osc,env,mod,seq,sync,midi,dbg,picker,chords}.ppm (default
+// Writes <prefix>_{osc,env,mod,fx,seq,sync,midi,picker,chords}.ppm (default
 // prefix "ui").
 // Convert with e.g. `magick ui_seq.ppm ui_seq.png`.
 #include <cstdio>
@@ -87,7 +87,6 @@ int main(int argc, char** argv)
 	waves.randomize(0, 1, 1234);  // osc 1 morphs saw -> a random shape
 	ui::Ui ui(params, pattern, transport, matrix, waves);
 	ui.redraw_all();
-	ui.set_cpu_mhz(480);
 	ui.set_cpu_load(0.123f, 0.187f);
 
 	std::uint32_t now = 0;
@@ -115,7 +114,7 @@ int main(int argc, char** argv)
 
 	// SEQ: the tab starts on OSC; go to SEQ and tap step 7 to turn it on and
 	// select it.
-	tab(3);
+	tab(4);
 	frame(true, 3 * 120 + 60, 35 + 52 + 26);
 	frame(false, 0, 0);
 	shot("seq");
@@ -139,8 +138,6 @@ int main(int argc, char** argv)
 	frame(false, 0, 0);
 
 	tab(6);
-	shot("dbg");
-	tab(5);
 	shot("midi");
 	// SYNC with the clock input selected and a clock arriving.
 	params.set(params::Id::ClockSource, 1.0f);
@@ -150,7 +147,7 @@ int main(int argc, char** argv)
 	transport.clock.level[1] = 0.01f;
 	transport.clock.threshold[1] = 0.02f;
 	transport.clock.bpm = 121.3f;
-	tab(4);
+	tab(5);
 	shot("sync");
 	params.set(params::Id::ClockSource, 0.0f);
 	tab(0);
@@ -159,6 +156,14 @@ int main(int argc, char** argv)
 	shot("env");
 	tab(2);
 	shot("mod");
+	// FX with all three effects in use, delay and mod FX synced.
+	params.set(params::Id::ModFxType, 1.0f);
+	params.set(params::Id::ModFxMix, 0.5f);
+	params.set(params::Id::DelayMode, 1.0f);
+	params.set(params::Id::DelayMix, 0.35f);
+	params.set(params::Id::ReverbMix, 0.25f);
+	tab(3);
+	shot("fx");
 
 	if(!ok)
 	{
@@ -166,7 +171,7 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	std::printf(
-	    "render_ui: wrote %s_{osc,env,mod,seq,sync,midi,dbg,picker,chords}.ppm\n",
+	    "render_ui: wrote %s_{osc,env,mod,fx,seq,sync,midi,picker,chords}.ppm\n",
 	    prefix.c_str());
 	return 0;
 }

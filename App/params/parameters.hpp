@@ -64,6 +64,25 @@ enum class Id : std::uint8_t
 	ClockSource,  // INT, EXT+ (clock in), EXT- (clock in, inverted)
 	ClockDiv,     // sequencer::ClockDiv: what one clock pulse is worth
 
+	// FX page (dsp::Effects). Each MIX is a wet level: 0 = off.
+	ModFxType,   // PHASER / FLANGER / CHORUS
+	ModFxMode,   // FREE / SYNC
+	ModFxRate,   // FREE rate, 0..1 (0.02 .. 10 Hz)
+	ModFxDiv,    // SYNC length (the LFO lengths)
+	ModFxDepth,
+	ModFxFeedback,
+	ModFxMix,
+	DelayMode,   // FREE / SYNC
+	DelayTime,   // FREE: ms
+	DelayDiv,    // SYNC: dsp::kDelayDivSteps
+	DelayFeedback,
+	DelayTone,
+	DelayStereo,  // MONO / PING
+	DelayMix,
+	ReverbDecay,
+	ReverbDamp,
+	ReverbMix,
+
 	Count
 };
 

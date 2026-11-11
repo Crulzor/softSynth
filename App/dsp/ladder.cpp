@@ -68,7 +68,7 @@ float Ladder::feedback(float resonance01, float g)
 	return 1.1f * threshold * r;
 }
 
-void Ladder::process(Sample* buf, int n, float g0, float g1, float k,
+DSP_HOT void Ladder::process(Sample* buf, int n, float g0, float g1, float k,
                      float drive, float makeup)
 {
 	const float g_step = (g1 - g0) / static_cast<float>(n);

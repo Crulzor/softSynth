@@ -370,7 +370,7 @@ App/
                            //   4×4 grid; note + chord pickers
     sync_page.{hpp,cpp}    // ✓ SYNC: clock source / division, tempo, input
                            //   level meters with threshold + edge lights
-    debug_page.{hpp,cpp}   // ✓ DBG: the old one-screen debug layout (§11)
+    fx_page.{hpp,cpp}      // ✓ FX: MOD FX / DELAY / REVERB rows
     theme.hpp              // ✓ colours
 
 test/                      // ✓ host build (native gcc, no MCU) — standalone
@@ -457,6 +457,17 @@ test/                      // ✓ host build (native gcc, no MCU) — standalone
   voice, else the oldest. A stolen voice keeps its phase / filter / level, so
   it glides instead of clicking. Output: voices summed at 0.3 each, then a
   soft clip (the same Padé tanh) to 16 bit.
+- **Effects** *(implemented, `dsp/fx`, `modfx`, `delay`, `reverb`)* — mono
+  voices → MOD FX (phaser: six swept allpasses + feedback; flanger /
+  chorus: a swept 1–6 / 10–25 ms delay; stereo by L/R LFOs 90° apart; FREE
+  or SYNC) → stereo delay of the mid (MONO / PING-PONG, tone low-pass +
+  soft clip in the feedback, tape-like time glide, 1 s 16-bit lines in
+  RAM_D2) → Dattorro plate reverb (one 32k 16-bit buffer with a single
+  write head, tank at half rate, 24 kHz). Send-style MIX per effect; MIX 0
+  skips the effect entirely. Measured: phaser +3.1 %, delay +3.3 %, reverb
+  +4.9 % of the CPU; six voices with everything on **71.8 %**.
+- **ITCM**: the per-sample functions (`DSP_HOT`) run from ITCM — with the
+  D-cache off, float constants in flash literal pools are uncached reads.
 - **CPU budget** — *measured on hardware 2026-11-11* (DWT, Debug build with
   the DSP at `-O2`): idle 2.8 %; worst case — a C2 minor-9 chord held by
   ties, so 5–6 voices with all 32 harmonics on both oscillators — **59.6 %
@@ -537,11 +548,12 @@ the DSP so there is something to hook the engine to; see §10.)
   ~50 Hz. `app.cpp` draws an on-screen button; touching it raises a gate
   (`volatile bool`, read in the SAI ISR) that switches the test tone on/off — a
   hand-driven stand-in for the real `note_on`/`note_off` until the engine lands.
-- ✅ **Multi-page UI** — `ui/` widgets and a five-page tab-bar layout
-  (OSC / ENV / MOD / SEQ / DBG; the old one-screen debug page kept as the
-  fifth tab, §11), editing `params::Parameters`, `modulation::Matrix` and a
-  `sequencer::Pattern`. Not hooked to sound yet: the audio callback streams
-  silence at that point. Host-tested and screenshot-able under `test/`.
+- ✅ **Multi-page UI** — `ui/` widgets and a seven-page tab-bar layout
+  (OSC / ENV / MOD / FX / SEQ / SYNC / MIDI, §11; the old one-screen DBG page
+  was retired 2026-11-11), editing `params::Parameters`,
+  `modulation::Matrix` and a `sequencer::Pattern`. Host-tested and
+  screenshot-able under `test/`.
+- ✅ **FX** — phaser / flanger / chorus, stereo delay, plate reverb (§7).
 - ✅ **Synth engine (§9.3–9.6)** — additive oscillators with A/B morph and
   random shapes, nonlinear Moog-style ladder, ADSR, two LFOs + the mod
   matrix, 6 voices with stealing (§7). Polyphonic USB-MIDI in; the sequencer
@@ -592,7 +604,7 @@ until release.
 ### The pages and the tab bar
 
 The screen is 480×246 for the active page plus a 26 px tab bar along the
-bottom. Seven tabs — **OSC, ENV, MOD, SEQ, SYNC, MIDI, DBG** — 48 px each, the active
+bottom. Seven tabs — **OSC, ENV, MOD, FX, SEQ, SYNC, MIDI** — 48 px each, the active
 one filled with its page's accent; a press on the bar's tab zone switches
 page. The **MIDI** tab carries a small LED in its corner: off with nothing on
 CN13, amber while enumerating, green when the MIDI class is running (flashing
@@ -613,7 +625,7 @@ Black page background, `kPanel` grey cells with rounded corners, and **one
 accent per section** (`theme.hpp`): OSC orange, FILTER cyan, ENV green, MOD
 violet, SEQ amber, MIDI pink. A widget draws its value / "on" state in its
 own accent (`Widget::set_accent`, set by the page's constructor; the default
-is orange, which is what the DBG page's mix of widgets uses). Pages head
+is orange). Pages head
 their sections with `draw_section()` — the label in the accent and a thin
 darker rule out to the section's width — instead of grey title bars. Knob
 rings are anti-aliased against the cell colour (`theme::mix`), and the last
@@ -692,12 +704,14 @@ detector's current threshold as a white tick, an edge light and the edge
 count, so a patch can be checked before pressing play. Two lines remind
 where to patch and that the input is line level. Accent: sky blue.
 
-### The DBG page
+### The FX page
 
-The original one-screen debug layout — oscillator / envelope / LFO cells on the
-left, the step grid on the right — kept as a fifth tab until the others cover
-it. The OSC header shows the CPU clock (or, in red, an init failure); the MOD
-header shows the audio-interrupt load as `CPU avg/peak%`.
+Three rows under lime section rules — **MOD FX**: TYPE (PHSR / FLNG / CHRS),
+MODE (FREE / SYNC), RATE or LEN, DEPTH, FBK, MIX; **DELAY**: MODE, STEREO
+(MONO / PING), MS or LEN, FBK, TONE, MIX; **REVERB**: DECAY, DAMP, MIX. MIX is
+always the right-hand column and is the effect's wet level (0 = off, and not
+processed). As on the MOD page the time knob shows the free value or the
+synced length depending on MODE.
 
 ### Widget behaviour
 
@@ -709,7 +723,7 @@ header shows the audio-interrupt load as `CPU avg/peak%`.
   destinations).
 - **Step grid**: tap toggles a step and selects it; hold (~0.45 s) selects
   without toggling and opens the note picker. An on-step is an accent-tinted
-  cell with its note name large in the middle (scale 3 on SEQ, 2 on DBG);
+  cell with its note name large in the middle (scale 3);
   the playing step (`Transport::step`) gets a 2 px accent outline, the
   selected one a white outline; beat numbers 1/5/9/13 are brighter.
 - **Play/stop** button between the note box and tempo: a play triangle when

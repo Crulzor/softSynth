@@ -16,8 +16,8 @@
 #include "params/parameters.hpp"
 #include "sequencer/pattern.hpp"
 #include "sequencer/sequencer.hpp"
-#include "ui/debug_page.hpp"
 #include "ui/env_page.hpp"
+#include "ui/fx_page.hpp"
 #include "ui/midi_page.hpp"
 #include "ui/mod_page.hpp"
 #include "ui/osc_page.hpp"
@@ -58,11 +58,9 @@ public:
 		bar_.invalidate();
 	}
 
-	// CPU read-outs on the DBG page.
-	void set_cpu_mhz(int mhz) { dbg_.set_cpu_mhz(mhz); }
-	void set_cpu_load(float average, float peak)
+	// Audio-interrupt load for the status strip (0..1).
+	void set_cpu_load(float average, float /*peak*/)
 	{
-		dbg_.set_cpu_load(average, peak);
 		bar_.set_cpu_load(average);
 	}
 
@@ -78,7 +76,7 @@ public:
 	int page() const { return page_; }
 	const MidiPage& midi() const { return midi_; }
 	const TabBar& bar() const { return bar_; }
-	const DebugPage& dbg() const { return dbg_; }
+	const SeqPage& seq() const { return seq_; }
 
 private:
  // How long the MIDI LED flashes white after a packet arrives.
@@ -91,10 +89,10 @@ private:
  OscPage osc_;
  EnvPage env_;
  ModPage mod_;
+ FxPage fx_;
  SeqPage seq_;
  SyncPage sync_;
  MidiPage midi_;
- DebugPage dbg_;
  TabBar bar_;
 
  Page* pages_[kNumPages];

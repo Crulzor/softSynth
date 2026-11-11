@@ -41,7 +41,7 @@ float Lfo::shape_at(LfoShape shape, float p, float held)
 
 void Lfo::new_level()
 {
-	std::uint32_t x = rng_;
+	std::uint32_t x = rng_ != 0 ? rng_ : 0x6C078965u;
 	x ^= x << 13;
 	x ^= x >> 17;
 	x ^= x << 5;

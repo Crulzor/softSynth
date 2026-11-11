@@ -961,3 +961,169 @@ TEST_CASE("per-oscillator destinations only move their own oscillator")
 	CHECK(f.live_pw(0) == doctest::Approx(0.0f));
 	CHECK(f.live_pw(1) == doctest::Approx(0.4f));
 }
+
+// --- Effects --------------------------------------------------------------------
+
+#include "dsp/fx.hpp"
+
+TEST_CASE("the delay repeats at its time, ping-pong alternates sides")
+{
+	static std::int16_t l[48000];
+	static std::int16_t r[48000];
+	Delay d;
+	d.init(l, r, 48000);
+	DelayParams p;
+	p.seconds = 0.1f;  // 4800 samples
+	p.feedback = 0.5f;
+	p.tone = 1.0f;
+	p.ping = true;
+	std::vector<float> in(24000, 0.0f), ol(24000), orr(24000);
+	in[0] = 0.5f;
+	d.process(p, in.data(), ol.data(), orr.data(), 24000);
+	CHECK(std::fabs(ol[4800]) > 0.3f);   // first repeat: left
+	CHECK(std::fabs(orr[4800]) < 0.01f);
+	CHECK(std::fabs(orr[9600]) > 0.1f);  // second: right
+	CHECK(std::fabs(ol[9600]) < 0.01f);
+}
+
+TEST_CASE("the reverb tail is stereo, decays and stays bounded")
+{
+	static Reverb rv;
+	rv.init();
+	ReverbParams p;
+	p.decay = 0.7f;
+	std::vector<float> in(96000, 0.0f), ol(96000), orr(96000);
+	in[0] = 0.8f;
+	rv.process(p, in.data(), in.data(), ol.data(), orr.data(), 96000);
+	CHECK(all_finite(ol));
+	CHECK(peak(ol) < 1.5f);
+	const std::vector<float> early(ol.begin() + 4800, ol.begin() + 24000);
+	const std::vector<float> late(ol.begin() + 72000, ol.end());
+	CHECK(rms(early) > 1e-3);
+	CHECK(rms(late) < rms(early));
+	CHECK(ol != orr);  // decorrelated sides
+}
+
+// --- MOD FX and the chain -------------------------------------------------------
+
+namespace
+{
+
+// Run ModFx over white-ish noise; return the two wet channels.
+void run_modfx(const ModFxParams& p, int n, std::vector<float>& l,
+               std::vector<float>& r)
+{
+	static ModFx fx;
+	fx.init();
+	std::vector<float> in(static_cast<std::size_t>(n));
+	std::uint32_t s = 1u;
+	for(float& v : in)
+	{
+		s = s * 1664525u + 1013904223u;
+		v = (static_cast<float>(s >> 9) / 4194304.0f - 1.0f) * 0.5f;
+	}
+	l.assign(static_cast<std::size_t>(n), 0.0f);
+	r.assign(static_cast<std::size_t>(n), 0.0f);
+	for(int i = 0; i < n; i += kBlockSize)
+	{
+		fx.process(p, &in[i], &l[i], &r[i], std::min(kBlockSize, n - i));
+	}
+}
+
+}  // namespace
+
+TEST_CASE("phaser, flanger and chorus stay finite, bounded and stereo")
+{
+	init_table();
+	for(int t = 0; t < static_cast<int>(dsp::ModFxType::Count); ++t)
+	{
+		CAPTURE(t);
+		ModFxParams p;
+		p.type = static_cast<dsp::ModFxType>(t);
+		p.rate = 0.6f;
+		p.depth = 1.0f;
+		p.feedback = 1.0f;  // the worst case
+		std::vector<float> l;
+		std::vector<float> r;
+		run_modfx(p, 48000, l, r);
+		CHECK(all_finite(l));
+		CHECK(all_finite(r));
+		CHECK(peak(l) < 4.0f);
+		CHECK(rms(l) > 0.05);
+		CHECK(l != r);  // the quadrature LFO makes the sides differ
+	}
+}
+
+TEST_CASE("the flanger is a delayed copy at its swept time")
+{
+	init_table();
+	// An impulse, LFO frozen at its start (rate ~0): the wet output is the
+	// impulse delayed by the base 1 ms plus half the sweep (sine at phase 0).
+	static ModFx fx;
+	fx.init();
+	ModFxParams p;
+	p.type = dsp::ModFxType::Flanger;
+	p.rate = 0.0f;
+	p.depth = 1.0f;
+	p.feedback = 0.5f;  // none
+	std::vector<float> in(4800, 0.0f);
+	std::vector<float> l(4800);
+	std::vector<float> r(4800);
+	in[0] = 1.0f;
+	for(int i = 0; i < 4800; i += kBlockSize)
+	{
+		fx.process(p, &in[i], &l[i], &r[i], kBlockSize);
+	}
+	const int want = static_cast<int>(0.001f * kSr + 0.5f * 0.005f * kSr);
+	int at = 0;
+	for(int i = 1; i < 4800; ++i)
+	{
+		at = std::fabs(l[i]) > std::fabs(l[at]) ? i : at;
+	}
+	CHECK(std::abs(at - want) <= 2);
+}
+
+TEST_CASE("with every MIX at 0 the chain passes the dry signal untouched")
+{
+	init_table();
+	static std::int16_t dl[48000];
+	static std::int16_t dr[48000];
+	static Effects fx;
+	fx.init(dl, dr, 48000);
+	FxParams p;  // all mixes default to 0
+	std::vector<float> in(4800);
+	for(int i = 0; i < 4800; ++i)
+	{
+		in[i] = 0.5f * std::sin(0.01f * static_cast<float>(i));
+	}
+	std::vector<float> l(4800);
+	std::vector<float> r(4800);
+	fx.process(p, in.data(), l.data(), r.data(), 4800);
+	CHECK(l == in);
+	CHECK(r == in);
+
+	// With the delay up, the sides differ (ping-pong) and something echoes
+	// after the input stops.
+	p.delay_mix = 0.8f;
+	p.delay.ping = true;
+	p.delay.seconds = 0.05f;
+	p.reverb_mix = 0.3f;
+	std::vector<float> quiet(9600, 0.0f);
+	std::vector<float> l2(9600);
+	std::vector<float> r2(9600);
+	fx.process(p, in.data(), l2.data(), r2.data(), 4800);
+	fx.process(p, quiet.data(), l2.data() + 4800, r2.data() + 4800, 4800);
+	const std::vector<float> tail(l2.begin() + 4800, l2.end());
+	CHECK(rms(tail) > 1e-3);
+	CHECK(l2 != r2);
+}
+
+TEST_CASE("the UI's FX name lists match the engine's tables")
+{
+	CHECK(static_cast<int>(params::spec(params::Id::DelayDiv).max) + 1 ==
+	      dsp::kDelayDivCount);
+	CHECK(static_cast<int>(params::spec(params::Id::ModFxDiv).max) + 1 ==
+	      dsp::kLfoDivCount);
+	CHECK(static_cast<int>(params::spec(params::Id::ModFxType).max) + 1 ==
+	      static_cast<int>(dsp::ModFxType::Count));
+}

@@ -1610,7 +1610,13 @@ void EnumButton::draw()
 	                   pressed_ ? accent_ : theme::kDim);
 	char text[8];
 	format_value(s, shown_, text);
-	const int scale = display::text_width(text, 3) <= r.w - 8 ? 3 : 2;
+	// As large as fits inside the cell (never past it: that would leave
+	// stale pixels when the value changes).
+	int scale = 3;
+	while(scale > 1 && display::text_width(text, scale) > r.w - 8)
+	{
+		--scale;
+	}
 	draw_centered(r, r.y + r.h - 8 * scale - 6, text, accent_, scale);
 }
 

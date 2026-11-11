@@ -21,8 +21,9 @@ namespace
 
 constexpr std::uint32_t kFrameMs = 20;  // the firmware polls at ~50 Hz
 
-// Centre of grid step `i` (0..15). Mirrors the layout in debug_page.cpp.
-int step_x(int i) { return 160 + (i % 4) * 80 + 40; }
+// Centre of grid step `i` (0..15). Mirrors the layout in seq_page.cpp: the
+// grid spans the page under the top bar, 120 x 52 cells.
+int step_x(int i) { return (i % 4) * 120 + 60; }
 int step_y(int i) { return 35 + (i / 4) * 52 + 26; }
 
 // Row-0 source button cell in framebuffer coords. Mirrors mod_page.cpp:
@@ -127,8 +128,8 @@ struct Rig
 	Rig()
 	{
 		ui.redraw_all();
-		// The tests edit the debug page: switch to its tab first.
-		frame(true, 312, 259);  // DBG tab, centre
+		// Most tests edit the SEQ page: switch to its tab first.
+		frame(true, 216, 259);  // SEQ tab, centre
 		frame(false, 0, 0);
 	}
 
@@ -161,8 +162,8 @@ TEST_CASE("tapping a step toggles it and selects it")
 	Rig r;
 	r.tap(step_x(5), step_y(5));
 	CHECK(r.pattern.steps[5].on);
-	CHECK(r.ui.dbg().grid().selected() == 5);
-	CHECK_FALSE(r.ui.dbg().picker().visible());
+	CHECK(r.ui.seq().grid().selected() == 5);
+	CHECK_FALSE(r.ui.seq().picker().visible());
 
 	r.tap(step_x(5), step_y(5));
 	CHECK_FALSE(r.pattern.steps[5].on);
@@ -182,14 +183,14 @@ TEST_CASE("holding a step opens the note picker and picking sets the note")
 {
 	Rig r;
 	r.hold(step_x(10), step_y(10), 600);
-	CHECK(r.ui.dbg().picker().visible());
+	CHECK(r.ui.seq().picker().visible());
 	r.frame(false);
 	CHECK_FALSE(r.pattern.steps[10].on);  // a long press doesn't toggle
 
 	// Octave up once (C4 -> octave 5), then the D key.
-	r.tap(386, 53);
-	r.tap(232, 150);
-	CHECK_FALSE(r.ui.dbg().picker().visible());
+	r.tap(226, 53);
+	r.tap(152, 150);
+	CHECK_FALSE(r.ui.seq().picker().visible());
 	CHECK(r.pattern.steps[10].on);
 	CHECK(r.pattern.steps[10].note == 74);  // D5
 }
@@ -205,21 +206,22 @@ TEST_CASE("closing the picker leaves no piano keys in the grid gaps")
 	r.tap(step_x(4), step_y(4));
 	r.frame(false);
 	r.hold(step_x(10), step_y(10), 600);
-	CHECK(r.ui.dbg().picker().visible());
+	CHECK(r.ui.seq().picker().visible());
 	r.frame(false);
-	r.tap(386, 53);   // octave +
-	r.tap(232, 150);  // the D key: sets the note and closes the picker
-	CHECK_FALSE(r.ui.dbg().picker().visible());
+	r.tap(226, 53);   // octave +
+	r.tap(152, 150);  // the D key: sets the note and closes the picker
+	CHECK_FALSE(r.ui.seq().picker().visible());
 
 	// The picker's keys reach into the gaps between the grid cells (the cells
-	// are inset 2 px in their 80x52 pitch). Those gap pixels must be back to
-	// the page background, not white/black key. DBG grid gaps: x 238..241
-	// and 318..321 between columns, y 85..88 and 137..140 between rows.
+	// are inset 2 px in their 120x52 pitch). Those gap pixels must be back to
+	// the page background, not white/black key. SEQ grid gaps: x 118..121,
+	// 238..241 and 358..361 between columns, y 85..88 and 137..140 between
+	// rows - all under the picker's keys (x 87..392).
 	const std::uint16_t bg =
 	    static_cast<std::uint16_t>(((ui::theme::kBackground.r & 0xF8) << 8) |
 	                               ((ui::theme::kBackground.g & 0xFC) << 3) |
 	                               (ui::theme::kBackground.b >> 3));
-	const int gaps[][2] = {{239, 90}, {200, 86}, {280, 138}, {319, 150}};
+	const int gaps[][2] = {{119, 90}, {100, 86}, {240, 139}, {359, 150}};
 	for(const auto& g : gaps)
 	{
 		const std::uint32_t i =
@@ -232,12 +234,12 @@ TEST_CASE("closing the picker leaves no piano keys in the grid gaps")
 	// their cells must not be left as bare background.
 	for(const int s : {0, 4, 10})
 	{
-		const int x = 160 + (s % 4) * 80 + 2;
+		const int x = (s % 4) * 120 + 2;
 		const int y = 35 + (s / 4) * 52 + 2;
 		bool any = false;
 		for(int j = 0; j < 48 && !any; ++j)
 		{
-			for(int i = 0; i < 76; ++i)
+			for(int i = 0; i < 116; ++i)
 			{
 				if(display::detail::g_framebuffer[
 	                       static_cast<std::uint32_t>(y + j) *
@@ -271,12 +273,12 @@ TEST_CASE("a playhead tick redraws every cell, not just the two it touched")
 	                               (ui::theme::kBackground.b >> 3));
 	for(const int s : {0, 4, 6})
 	{
-		const int x = 160 + (s % 4) * 80 + 2;
+		const int x = (s % 4) * 120 + 2;
 		const int y = 35 + (s / 4) * 52 + 2;
 		bool any = false;
 		for(int j = 0; j < 48 && !any; ++j)
 		{
-			for(int i = 0; i < 76; ++i)
+			for(int i = 0; i < 116; ++i)
 			{
 				if(display::detail::g_framebuffer[
 	                       static_cast<std::uint32_t>(y + j) *
@@ -296,32 +298,33 @@ TEST_CASE("black keys win where they overlap the white keys")
 	Rig r;
 	r.hold(step_x(0), step_y(0), 600);
 	r.frame(false);
-	r.tap(210, 100);  // C# sits over the C/D boundary
+	r.tap(130, 100);  // C# sits over the C/D boundary
 	CHECK(r.pattern.steps[0].note == 61);
 }
 
 TEST_CASE("the note box opens the picker for the selected step")
 {
 	Rig r;
-	r.tap(220, 17);  // nothing selected yet: no picker
-	CHECK_FALSE(r.ui.dbg().picker().visible());
+	r.tap(60, 17);  // nothing selected yet: no picker
+	CHECK_FALSE(r.ui.seq().picker().visible());
 
 	r.tap(step_x(3), step_y(3));
-	r.tap(220, 17);
-	CHECK(r.ui.dbg().picker().visible());
+	r.tap(60, 17);
+	CHECK(r.ui.seq().picker().visible());
 
 	// Outside the picker, on the tempo slider (which jumps on touch): the
 	// touch only dismisses the picker.
-	r.tap(440, 17);
-	CHECK_FALSE(r.ui.dbg().picker().visible());
+	r.tap(400, 17);
+	CHECK_FALSE(r.ui.seq().picker().visible());
 	CHECK(r.params.get(Id::Tempo) == 120.0f);
 }
 
 TEST_CASE("knobs move relative to the drag, without jumping on touch")
 {
 	Rig r;
-	const int x = 29;  // OS1 PIT knob
-	const int y = 36;
+	r.tap(24, 259);  // OSC tab
+	const int x = 33;  // OSC 1 PIT knob
+	const int y = 60;
 	r.frame(true, x, y);
 	CHECK(r.params.get(Id::Osc1Pitch) == 0.0f);
 	r.frame(true, x, y - 28);  // up two steps (14 px per step)
@@ -335,16 +338,16 @@ TEST_CASE("the play button toggles the transport")
 {
 	Rig r;
 	CHECK_FALSE(r.transport.run);
-	r.tap(306, 17);
+	r.tap(148, 17);
 	CHECK(r.transport.run);
-	r.tap(306, 17);
+	r.tap(148, 17);
 	CHECK_FALSE(r.transport.run);
 }
 
 TEST_CASE("the tempo slider follows the finger")
 {
 	Rig r;
-	r.frame(true, 386, 17);  // left end of the track
+	r.frame(true, 358, 17);  // left end of the track
 	CHECK(r.params.get(Id::Tempo) == 30.0f);
 	r.frame(true, 468, 17);  // right end
 	CHECK(r.params.get(Id::Tempo) == 300.0f);
@@ -354,28 +357,19 @@ TEST_CASE("the tempo slider follows the finger")
 TEST_CASE("tapping a tab switches the page")
 {
 	Rig r;
-	CHECK(r.ui.page() == 6);  // the rig starts on the DBG tab
-	r.tap(24, 259);
-	CHECK(r.ui.page() == 0);
-	r.tap(72, 259);
-	CHECK(r.ui.page() == 1);
-	r.tap(120, 259);
-	CHECK(r.ui.page() == 2);
-	r.tap(168, 259);
-	CHECK(r.ui.page() == 3);
-	r.tap(216, 259);
-	CHECK(r.ui.page() == 4);  // SYNC
-	r.tap(264, 259);
-	CHECK(r.ui.page() == 5);  // MIDI
-	r.tap(312, 259);
-	CHECK(r.ui.page() == 6);  // DBG
+	CHECK(r.ui.page() == ui::kSeqTab);  // the rig starts on SEQ
+	for(int i = 0; i < ui::kNumPages; ++i)
+	{
+		r.tap(24 + 48 * i, 259);
+		CHECK(r.ui.page() == i);
+	}
 }
 
 TEST_CASE("the MIDI page shows the link state and the incoming notes")
 {
 	Rig r;
-	r.tap(264, 259);  // MIDI tab
-	REQUIRE(r.ui.page() == 5);
+	r.tap(312, 259);  // MIDI tab
+	REQUIRE(r.ui.page() == ui::kMidiTab);
 	CHECK(r.ui.midi().shown_link().state == midi::LinkState::NoDevice);
 
 	midi::Link link;
@@ -658,8 +652,8 @@ TEST_CASE("the ENV curve leaves no stroke outside its rect")
 TEST_CASE("the SEQ page edits the pattern and the transport")
 {
 	Rig r;
-	r.tap(168, 259);  // SEQ tab
-	CHECK(r.ui.page() == 3);
+	r.tap(216, 259);  // SEQ tab
+	CHECK(r.ui.page() == ui::kSeqTab);
 
 	// The play button toggles the transport the audio ISR reads.
 	CHECK_FALSE(r.transport.run);
@@ -900,7 +894,7 @@ TEST_CASE("a matrix row lights up when its amount leaves zero")
 TEST_CASE("the SEQ playhead is an accent outline on its step")
 {
 	Rig r;
-	r.tap(168, 259);  // SEQ tab
+	r.tap(216, 259);  // SEQ tab
 	r.transport.run = true;
 	r.transport.step = 5;
 	r.frame(false);
@@ -921,11 +915,11 @@ TEST_CASE("the SEQ playhead is an accent outline on its step")
 TEST_CASE("the chord button opens a picker that sets the step's chord")
 {
 	Rig r;
-	r.tap(168, 259);  // SEQ tab
+	r.tap(216, 259);  // SEQ tab
 	r.tap(60, 61);    // step 1 on + selected
 	REQUIRE(r.pattern.steps[0].on);
 	r.tap(208, 17);   // CHORD
-	CHECK(r.ui.page() == 3);
+	CHECK(r.ui.page() == ui::kSeqTab);
 	// Picker buttons: 5 x 4 over the grid (0, 35, 480, 211); MIN7 is 11.
 	const int minor7 = static_cast<int>(sequencer::Chord::Min7);
 	const int bx = (minor7 % 5) * 96 + 48;
@@ -954,7 +948,7 @@ TEST_CASE("the chord button opens a picker that sets the step's chord")
 TEST_CASE("TIE ties the selected step; tapping a tied step un-ties it")
 {
 	Rig r;
-	r.tap(168, 259);  // SEQ tab
+	r.tap(216, 259);  // SEQ tab
 	r.tap(60, 61);    // step 1 on
 	r.tap(180, 61);   // step 2 on + selected
 	r.tap(272, 17);   // TIE
@@ -974,7 +968,7 @@ TEST_CASE("TIE ties the selected step; tapping a tied step un-ties it")
 	r.tap(272, 17);
 	REQUIRE(r.pattern.steps[1].tie);
 	r.tap(60, 17);  // note box -> picker for step 2
-	REQUIRE(r.ui.page() == 3);
+	REQUIRE(r.ui.page() == ui::kSeqTab);
 	r.tap(240, 200);  // a white key
 	CHECK_FALSE(r.pattern.steps[1].tie);
 	CHECK(r.pattern.steps[1].on);
@@ -983,7 +977,7 @@ TEST_CASE("TIE ties the selected step; tapping a tied step un-ties it")
 TEST_CASE("the grid shows a step's chord and a tie")
 {
 	Rig r;
-	r.tap(168, 259);  // SEQ tab
+	r.tap(216, 259);  // SEQ tab
 	r.frame(false);
 	const auto cell = [&](int i)
 	{
@@ -1006,7 +1000,7 @@ TEST_CASE("the grid shows a step's chord and a tie")
 TEST_CASE("the SYNC page sets the clock source and division")
 {
 	Rig r;
-	r.tap(216, 259);  // SYNC tab
+	r.tap(264, 259);  // SYNC tab
 	REQUIRE(r.ui.page() == ui::kSyncTab);
 	// Mirrors sync_page.cpp: SRC at (8, 16, 108, 60), DIV right of it.
 	CHECK(r.params.get(Id::ClockSource) == 0.0f);
@@ -1027,7 +1021,7 @@ TEST_CASE("the SYNC page sets the clock source and division")
 TEST_CASE("the SYNC page shows the input level, edges and measured tempo")
 {
 	Rig r;
-	r.tap(216, 259);  // SYNC tab
+	r.tap(264, 259);  // SYNC tab
 	r.frame(false);
 	const auto meter = [&]
 	{
@@ -1169,4 +1163,45 @@ TEST_CASE("the WAVE scope shows pulse width, from the knob or modulation")
 	r.waves.set_live(0.0f, 0.0f, 0.5f, 0.7f, 0.0f);
 	r.frame(false);
 	CHECK(scope() != plain);
+}
+
+TEST_CASE("the FX page edits the three effects; MODE swaps the time knob")
+{
+	Rig r;
+	r.tap(168, 259);  // FX tab
+	REQUIRE(r.ui.page() == ui::kFxTab);
+	// Mirrors fx_page.cpp: rows from y 16 / 98 / 180 (44 high); buttons at
+	// x 8 and 90 (76 wide), knob columns at x 172 + 76 * col (70 wide).
+	const auto drag_up = [&](int x, int y)
+	{
+		r.frame(true, x, y);
+		r.frame(true, x, y - 40);
+		r.frame(false);
+	};
+	r.tap(46, 38);  // MOD FX TYPE
+	CHECK(r.params.get(Id::ModFxType) == 1.0f);
+	drag_up(435, 38);  // MOD FX MIX
+	CHECK(r.params.get(Id::ModFxMix) > 0.0f);
+	drag_up(435, 120);  // DELAY MIX
+	CHECK(r.params.get(Id::DelayMix) > 0.0f);
+	drag_up(435, 202);  // REVERB MIX
+	CHECK(r.params.get(Id::ReverbMix) > 0.0f);
+	drag_up(283, 202);  // REVERB DECAY
+	CHECK(r.params.get(Id::ReverbDecay) > 0.6f);
+
+	// DELAY: FREE -> the knob sets milliseconds; SYNC -> a note length.
+	const float ms = r.params.get(Id::DelayTime);
+	drag_up(207, 120);
+	CHECK(r.params.get(Id::DelayTime) > ms);
+	r.tap(46, 120);  // DELAY MODE -> SYNC
+	CHECK(r.params.get(Id::DelayMode) == 1.0f);
+	const float ms2 = r.params.get(Id::DelayTime);
+	const float len = r.params.get(Id::DelayDiv);
+	r.frame(true, 207, 120);
+	r.frame(true, 207, 92);  // up two steps
+	r.frame(false);
+	CHECK(r.params.get(Id::DelayDiv) == len + 2.0f);
+	CHECK(r.params.get(Id::DelayTime) == ms2);
+	r.tap(128, 120);  // STEREO: PING -> MONO
+	CHECK(r.params.get(Id::DelayStereo) == 0.0f);
 }

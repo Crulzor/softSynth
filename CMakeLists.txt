@@ -55,10 +55,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # HAL-free, also host-built + unit-tested under test/
     App/display_draw.cpp
     App/dsp/additive_osc.cpp
+    App/dsp/delay.cpp
     App/dsp/engine.cpp
     App/dsp/envelope.cpp
+    App/dsp/fx.cpp
     App/dsp/ladder.cpp
     App/dsp/lfo.cpp
+    App/dsp/modfx.cpp
+    App/dsp/reverb.cpp
     App/dsp/sine_table.cpp
     App/dsp/spectrum.cpp
     App/dsp/voice.cpp
@@ -71,7 +75,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/sequencer/sequencer.cpp
     App/ui/sync_page.cpp
     App/ui/widgets.cpp
-    App/ui/debug_page.cpp
+    App/ui/fx_page.cpp
     App/ui/midi_page.cpp
     App/ui/env_page.cpp
     App/ui/mod_page.cpp
@@ -113,6 +117,10 @@ set_source_files_properties(
     App/dsp/ladder.cpp
     App/dsp/lfo.cpp
     App/dsp/voice.cpp
+    App/dsp/delay.cpp
+    App/dsp/fx.cpp
+    App/dsp/modfx.cpp
+    App/dsp/reverb.cpp
     App/sequencer/ext_clock.cpp  # the clock-input edge detector, per sample
     PROPERTIES COMPILE_OPTIONS "-O2;-ffp-contract=fast")
 
@@ -123,6 +131,14 @@ set_source_files_properties(
 # speed-critical (the per-sample code above is -O2). -Og was 4.5 KB bigger.
 # Release builds use -Os for everything anyway; these options come after the
 # build type's -O0, so they win in Debug only where it matters.
+# Release is the build that goes on the board (Debug no longer fits the
+# 128 KB with everything in): -Os overall, the per-sample code -O2 (above),
+# and full debug info - it lives in the .elf, not in flash, so stepping
+# through the code still works.
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -g3)
+endif()
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set_source_files_properties(
         App/app.cpp
@@ -143,7 +159,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         App/dsp/sine_table.cpp
         App/dsp/spectrum.cpp
         App/ui/widgets.cpp
-        App/ui/debug_page.cpp
+        App/ui/fx_page.cpp
         App/ui/midi_page.cpp
         App/ui/env_page.cpp
         App/ui/mod_page.cpp

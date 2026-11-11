@@ -14,7 +14,7 @@ namespace dsp
 // long and zero past `harmonics`, so rounding the count up to a multiple of
 // four only ever adds zero terms.
 
-void AdditiveOsc::render(const float* a, const float* d, int harmonics,
+DSP_HOT void AdditiveOsc::render(const float* a, const float* d, int harmonics,
                          float shape0, float shape1, float inc, Sample* out,
                          int n)
 {
@@ -132,7 +132,7 @@ float pwm_coeffs(const float* w, int harmonics, float width, float* c)
 	return 0.5f * width;
 }
 
-void AdditiveOsc::render_pw(const float* a, const float* d, int harmonics,
+DSP_HOT void AdditiveOsc::render_pw(const float* a, const float* d, int harmonics,
                             float shape0, float shape1, float pw, float inc,
                             Sample* out, int n)
 {

@@ -85,7 +85,7 @@ int Engine::active() const
 	return n;
 }
 
-void Engine::prepare(const Patch& patch, int n, BlockCtl& ctl)
+DSP_HOT void Engine::prepare(const Patch& patch, int n, BlockCtl& ctl)
 {
 	ctl.patch = &patch;
 	ctl.env = Envelope::Coeffs::from(patch.attack, patch.decay, patch.sustain,
@@ -186,7 +186,7 @@ void Engine::prepare(const Patch& patch, int n, BlockCtl& ctl)
 	ctl.makeup = 1.0f / std::tanh(drive);
 }
 
-void Engine::render(const Patch& patch, Sample* out, int n)
+DSP_HOT void Engine::render(const Patch& patch, Sample* out, int n)
 {
 	// The scratch buffers hold one block: cut anything longer into blocks.
 	while(n > kBlockSize)

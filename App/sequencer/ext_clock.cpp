@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "sequencer/ext_clock.hpp"
 
+#include "dsp/dsp_config.hpp"
+
 namespace sequencer
 {
 namespace
@@ -60,7 +62,7 @@ int pulses_per_quarter(ClockDiv div)
 // --- EdgeDetector
 // -------------------------------------------------------------
 
-int EdgeDetector::process(const std::int16_t* in, int stride, int n,
+DSP_HOT int EdgeDetector::process(const std::int16_t* in, int stride, int n,
                           bool invert, int* edges)
 {
 	constexpr float kScale = 1.0f / 32768.0f;
@@ -153,7 +155,7 @@ void ExtClock::emit_step(Sequencer::Event& e, int step, int offset,
 	gate_timer_ = step_len > 1 ? step_len / 2 : 0;
 }
 
-Sequencer::Event ExtClock::process(bool run, const int* clocks, int n_clocks,
+DSP_HOT Sequencer::Event ExtClock::process(bool run, const int* clocks, int n_clocks,
                                    const int* resets, int n_resets,
                                    ClockDiv div, int frames)
 {

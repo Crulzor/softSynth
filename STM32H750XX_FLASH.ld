@@ -264,6 +264,25 @@ SECTIONS
     . = ALIGN(4);
   } >RAM_D2
 
+  /* The audio interrupt's per-sample code (functions marked DSP_HOT,
+   * App/dsp/dsp_config.hpp) runs from ITCM: zero wait states for the code
+   * *and* its literal pools - with the D-cache off, constants loaded from
+   * flash are uncached reads. Stored in flash, copied to ITCM by app_main()
+   * before audio starts. Starts 0x100 in so no function sits at address 0
+   * (it would compare equal to a null pointer). Manual addition - re-apply
+   * after a CubeMX regenerate (README, "Manual changes"). */
+  .itcm_text :
+  {
+    . = . + 0x100;
+    . = ALIGN(8);
+    _sitcm = .;
+    *(.itcm_text)
+    *(.itcm_text*)
+    . = ALIGN(8);
+    _eitcm = .;
+  } >ITCMRAM AT> FLASH
+  _siitcm = LOADADDR(.itcm_text) + (_sitcm - ADDR(.itcm_text));
+
   /* Remove information from the standard libraries */
   /DISCARD/ :
   {

@@ -9,6 +9,12 @@ namespace
 constexpr const char* kClockSources[] = {"INT", "EXT+", "EXT-"};
 constexpr const char* kLfoShapes[] = {"SIN", "TRI", "SAW", "SQR", "S&H"};
 constexpr const char* kLfoModes[] = {"FREE", "SYNC"};
+constexpr const char* kModFxTypes[] = {"PHSR", "FLNG", "CHRS"};
+constexpr const char* kStereo[] = {"MONO", "PING"};
+// Same order as dsp::kDelayDivSteps.
+constexpr const char* kDelayDivs[] = {"1/32", "1/16T", "1/16", "1/8T",
+                                      "1/16.", "1/8",  "1/4T", "1/8.",
+                                      "1/4",  "1/4.", "1/2"};
 // Same order as dsp::kLfoDivSteps.
 constexpr const char* kLfoDivs[] = {"4BAR", "2BAR", "1BAR", "1/2",
                                     "1/4.", "1/4",  "1/4T", "1/8.",
@@ -50,6 +56,24 @@ constexpr Spec kSpecs[kCount] = {
 
     {"SRC", 0.0f, 2.0f, 0.0f, 1.0f, Format::Enum, kClockSources},
     {"DIV", 0.0f, 4.0f, 0.0f, 1.0f, Format::Enum, kClockDivs},
+
+    {"TYPE", 0.0f, 2.0f, 0.0f, 1.0f, Format::Enum, kModFxTypes},
+    {"MODE", 0.0f, 1.0f, 0.0f, 1.0f, Format::Enum, kLfoModes},
+    {"RATE", 0.0f, 1.0f, 0.3f, 0.0f, Format::Scale127, nullptr},
+    {"LEN", 0.0f, 11.0f, 2.0f, 1.0f, Format::Enum, kLfoDivs},
+    {"DEPTH", 0.0f, 1.0f, 0.6f, 0.0f, Format::Scale127, nullptr},
+    {"FBK", 0.0f, 1.0f, 0.5f, 0.0f, Format::Scale127, nullptr},
+    {"MIX", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
+    {"MODE", 0.0f, 1.0f, 0.0f, 1.0f, Format::Enum, kLfoModes},
+    {"MS", 10.0f, 1000.0f, 350.0f, 0.0f, Format::Unsigned, nullptr},
+    {"LEN", 0.0f, 10.0f, 7.0f, 1.0f, Format::Enum, kDelayDivs},
+    {"FBK", 0.0f, 1.0f, 0.4f, 0.0f, Format::Scale127, nullptr},
+    {"TONE", 0.0f, 1.0f, 0.6f, 0.0f, Format::Scale127, nullptr},
+    {"STEREO", 0.0f, 1.0f, 1.0f, 1.0f, Format::Enum, kStereo},
+    {"MIX", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
+    {"DECAY", 0.0f, 1.0f, 0.6f, 0.0f, Format::Scale127, nullptr},
+    {"DAMP", 0.0f, 1.0f, 0.4f, 0.0f, Format::Scale127, nullptr},
+    {"MIX", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
 };
 
 }  // namespace
