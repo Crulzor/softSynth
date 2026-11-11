@@ -67,6 +67,10 @@ class Engine
 	float live_mix() const { return live_mix_; }
 	float live_pw(int osc) const { return live_pw_[osc]; }
 
+	// The most recently started voice that is still sounding: its note, or
+	// -1 when all are idle.
+	int newest_note() const;
+
    private:
 	void prepare(const Patch& patch, int n, BlockCtl& ctl);
 

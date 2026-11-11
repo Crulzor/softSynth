@@ -304,7 +304,9 @@ void Knob::draw()
 	const params::Spec& s = params::spec(id_);
 	shown_ = params_.get(id_);
 	const float n = params_.normalized(id_);
-	const bool bipolar = s.min < 0.0f;
+	// Bipolar (filling from 12 o'clock) only for ranges centred on zero,
+	// like pitch +-12 - not for, say, a -60 .. +6 dB volume.
+	const bool bipolar = s.min < 0.0f && -s.min == s.max;
 
 	fill_cell(r, theme::kPanel);
 	char text[8];
@@ -1231,8 +1233,57 @@ void Scope::current(Shown& v) const
 	v.pw[1] = params_.get(params::Id::Osc2Pw);
 }
 
+void Scope::take_capture()
+{
+	constexpr int kSize = dsp::ScopeTap::kSize;
+	float cap[kSize];
+	const float period = waves_.scope.period();
+	waves_.scope.take(cap);
+	if(period <= 0.0f)
+	{
+		live_on_ = false;  // nothing sounding: back to the shapes
+		return;
+	}
+	// Two cycles of the newest note, within the capture.
+	int window = static_cast<int>(2.0f * period + 0.5f);
+	window = window < 64 ? 64 : (window > kSize ? kSize : window);
+	const int w = rect_.w - 8 < kPoints ? rect_.w - 8 : kPoints;
+	float peak = 0.0f;
+	for(int i = 0; i < window; ++i)
+	{
+		const float a = cap[i] < 0.0f ? -cap[i] : cap[i];
+		peak = a > peak ? a : peak;
+	}
+	const float scale = 1.0f / (peak > 0.05f ? peak : 0.05f);
+	for(int x = 0; x < w; ++x)
+	{
+		const float pos = static_cast<float>(x) *
+		                  static_cast<float>(window - 1) /
+		                  static_cast<float>(w - 1);
+		const int i = static_cast<int>(pos);
+		const int j = i + 1 < window ? i + 1 : i;
+		const float f = pos - static_cast<float>(i);
+		live_[x] = (cap[i] + f * (cap[j] - cap[i])) * scale;
+	}
+	live_on_ = true;
+}
+
 void Scope::sync()
 {
+	if(waves_.scope.ready())
+	{
+		const bool was = live_on_;
+		take_capture();
+		if(live_on_ || was)
+		{
+			invalidate();  // a new picture, or back to the shapes
+			return;
+		}
+	}
+	if(live_on_)
+	{
+		return;  // the shapes don't show while live
+	}
 	// Redraw on a visible change only (a fifth of a percent of the range):
 	// a modulated shape moves every block.
 	auto moved = [](float a, float b)
@@ -1259,14 +1310,9 @@ void Scope::trace(int osc, display::Color c)
 	          shown_.pw[osc]);
 }
 
-void Scope::draw()
+void Scope::draw_graticule()
 {
 	const Rect& r = rect_;
-	shown_version_[0] = waves_.version(0);
-	shown_version_[1] = waves_.version(1);
-	current(shown_);
-	fill_cell(r, theme::kPanel);
-
 	// Graticule: dotted quarter divisions, a solid zero line.
 	const display::Color grid = theme::mix(theme::kPanel, theme::kTrack, 160);
 	const int x0 = r.x + 4;
@@ -1291,6 +1337,46 @@ void Scope::draw()
 		}
 	}
 	display::fill_rect(x0, mid, w, 1, theme::kTrack);
+
+}
+
+void Scope::draw_live()
+{
+	const Rect& r = rect_;
+	const int x0 = r.x + 4;
+	const int h = r.h - 8;
+	const int mid = r.y + 4 + h / 2;
+	const int amp = h / 2 - 11;  // headroom under the OUT label
+	const int w = r.w - 8 < kPoints ? r.w - 8 : kPoints;
+	int prev = mid;
+	for(int i = 0; i < w; ++i)
+	{
+		float v = live_[i];
+		v = v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
+		const int y = mid - round_to_int(v * static_cast<float>(amp));
+		if(i > 0)
+		{
+			display::draw_line(x0 + i - 1, prev, x0 + i, y, accent_);
+		}
+		prev = y;
+	}
+	display::draw_text(r.x + 6, r.y + 5, "OUT", accent_);
+}
+
+void Scope::draw()
+{
+	const Rect& r = rect_;
+	shown_version_[0] = waves_.version(0);
+	shown_version_[1] = waves_.version(1);
+	current(shown_);
+	fill_cell(r, theme::kPanel);
+
+	draw_graticule();
+	if(live_on_)
+	{
+		draw_live();
+		return;
+	}
 
 	// The two oscillators, each as bright as the MIX lets it through; the
 	// louder one is drawn last, on top.

@@ -107,6 +107,7 @@ __attribute__((section(".dma_buffer"))) int16_t g_delay_r[kDelayLength];
 dsp::Engine g_engine;
 dsp::Effects g_fx;  // reverb + mod FX lines: ~70 KB of DTCM
 dsp::FxParams g_fx_params;
+float g_gain = 1.0f;  // master gain at the end of the last block
 sequencer::Player g_player;
 dsp::Patch g_patch;
 sequencer::ExtClock g_ext_clock(static_cast<float>(audio_out::kSampleRate));
@@ -324,16 +325,37 @@ DSP_HOT void render_block(int16_t* out, const int16_t* in, int n)
 	                 g_engine.live_mix(), g_engine.live_pw(0),
 	                 g_engine.live_pw(1));
 
+	// The scope sees the voices before the FX: the newest note's period
+	// lets it show a steady couple of cycles.
+	const int note = g_engine.newest_note();
+	float period = 0.0f;
+	if(note >= 0)
+	{
+		const float hz = 440.0f * std::exp2((static_cast<float>(note) +
+		                                     g_patch.osc_semis[0] - 69.0f) /
+		                                    12.0f);
+		period = dsp::kSampleRate / hz;
+	}
+	g_waves.scope.feed(buf, n, period);
+
 	// Effects: mono voices in, stereo out.
 	fill_fx(g_fx_params);
 	float left[dsp::kBlockSize];
 	float right[dsp::kBlockSize];
 	g_fx.process(g_fx_params, buf, left, right, n);
+
+	// Master volume, ramped across the block (no zipper); -60 dB is off.
+	const float db = g_params.get(params::Id::MasterVolume);
+	const float gain = db <= -59.5f ? 0.0f : std::exp2(db * 0.16609640f);
+	float g = g_gain;
+	const float g_step = (gain - g) / static_cast<float>(n);
 	for(int i = 0; i < n; ++i)
 	{
-		out[2 * i] = to_i16(left[i]);
-		out[2 * i + 1] = to_i16(right[i]);
+		out[2 * i] = to_i16(left[i] * g);
+		out[2 * i + 1] = to_i16(right[i] * g);
+		g += g_step;
 	}
+	g_gain = gain;
 }
 
 // DMA callback, ISR context: render `frames` interleaved stereo frames into

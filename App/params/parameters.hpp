@@ -82,6 +82,7 @@ enum class Id : std::uint8_t
 	ReverbDecay,
 	ReverbDamp,
 	ReverbMix,
+	MasterVolume,  // dB, -60 (= off) .. +6, after everything
 
 	Count
 };

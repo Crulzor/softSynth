@@ -74,6 +74,7 @@ constexpr Spec kSpecs[kCount] = {
     {"DECAY", 0.0f, 1.0f, 0.6f, 0.0f, Format::Scale127, nullptr},
     {"DAMP", 0.0f, 1.0f, 0.4f, 0.0f, Format::Scale127, nullptr},
     {"MIX", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
+    {"VOL", -60.0f, 6.0f, 0.0f, 0.0f, Format::Signed, nullptr},
 };
 
 }  // namespace

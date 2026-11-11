@@ -75,6 +75,19 @@ void Engine::release_all(std::uint8_t tag)
 	}
 }
 
+int Engine::newest_note() const
+{
+	const Voice* newest = nullptr;
+	for(const Voice& v : voices_)
+	{
+		if(!v.idle() && (newest == nullptr || v.age() > newest->age()))
+		{
+			newest = &v;
+		}
+	}
+	return newest != nullptr ? newest->note() : -1;
+}
+
 int Engine::active() const
 {
 	int n = 0;

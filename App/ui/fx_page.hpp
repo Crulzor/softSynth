@@ -6,7 +6,9 @@
 //            RATE or LEN   DEPTH   FBK   MIX
 //   DELAY    MODE (FREE / SYNC)  STEREO (MONO / PING)
 //            MS or LEN     FBK     TONE  MIX
-//   REVERB                  DECAY   DAMP  MIX
+//   OUT VOL   REVERB        DECAY   DAMP  MIX
+//
+// VOL is the master volume in dB (-60 = off .. +6), the very last stage.
 //
 // MIX is each effect's wet level, 0 = off (the dry signal always passes).
 // As on the MOD page, the rate / time knob shows the free value (Hz-ish
@@ -32,7 +34,7 @@ class FxPage : public Page
 	void update(std::uint32_t now_ms) override;
 
    private:
-	static constexpr int kWidgets = 17;
+	static constexpr int kWidgets = 18;
 
 	Widget* hit(int x, int y);
 	bool active(const Widget* w) const;
@@ -57,6 +59,8 @@ class FxPage : public Page
 	Knob rev_decay_;
 	Knob rev_damp_;
 	Knob rev_mix_;
+	// OUT
+	Knob volume_;
 
 	params::Parameters& params_;
 	Widget* widgets_[kWidgets];

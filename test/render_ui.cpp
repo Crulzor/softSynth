@@ -6,11 +6,13 @@
 //
 //   ./render_ui [prefix]
 //
-// Writes <prefix>_{osc,env,mod,fx,seq,sync,midi,picker,chords}.ppm (default
+// Writes <prefix>_{osc,osc_live,env,mod,fx,seq,sync,midi,picker,chords}.ppm (default
 // prefix "ui").
 // Convert with e.g. `magick ui_seq.ppm ui_seq.png`.
+#include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "display.hpp"
 #include "sequencer/chords.hpp"
@@ -152,6 +154,24 @@ int main(int argc, char** argv)
 	params.set(params::Id::ClockSource, 0.0f);
 	tab(0);
 	shot("osc");
+	// The scope live: a capture of a filtered saw-ish note (period 160).
+	{
+		std::vector<float> x(dsp::ScopeTap::kSize + 400);
+		for(std::size_t i = 0; i < x.size(); ++i)
+		{
+			const float ph = static_cast<float>(i % 160) / 160.0f;
+			x[i] = 0.25f * (std::sin(6.2831853f * ph) +
+			                0.4f * std::sin(2.0f * 6.2831853f * ph) +
+			                0.2f * std::sin(3.0f * 6.2831853f * ph));
+		}
+		waves.scope.feed(x.data(), static_cast<int>(x.size()), 160.0f);
+		frame(false, 0, 0);
+		shot("osc_live");
+		std::vector<float> quiet(dsp::ScopeTap::kMaxWait + dsp::ScopeTap::kSize,
+		                         0.0f);
+		waves.scope.feed(quiet.data(), static_cast<int>(quiet.size()), 0.0f);
+		frame(false, 0, 0);
+	}
 	tab(1);
 	shot("env");
 	tab(2);
@@ -171,7 +191,7 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	std::printf(
-	    "render_ui: wrote %s_{osc,env,mod,fx,seq,sync,midi,picker,chords}.ppm\n",
+	    "render_ui: wrote %s_{osc,osc_live,env,mod,fx,seq,sync,midi,picker,chords}.ppm\n",
 	    prefix.c_str());
 	return 0;
 }

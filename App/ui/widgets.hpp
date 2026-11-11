@@ -462,7 +462,12 @@ private:
 	display::Color badge_{0, 0, 0};
 };
 
-// The OSC page's WAVE display: one cycle of each oscillator's current shape
+// The OSC page's WAVE display. While notes sound it shows the real signal:
+// the voices' output after the filter and envelopes, before the FX (a
+// triggered capture from the audio side, dsp::ScopeTap), about two cycles
+// of the newest note from a rising zero crossing, auto-scaled, labelled
+// OUT. With nothing sounding it shows one cycle of each oscillator's current
+// shape:
 // - its two slots blended at the morph position it is playing - over a
 // graticule (quarter divisions, a brighter zero line). Osc 1 in the accent,
 // osc 2 in white, each brighter the more of it the MIX lets through. The
@@ -474,7 +479,7 @@ private:
 class Scope : public Widget
 {
    public:
-	Scope(Rect r, const params::WaveSlots& waves,
+	Scope(Rect r, params::WaveSlots& waves,
 	      const params::Parameters& params)
 	    : Widget(r), waves_(waves), params_(params)
 	{
@@ -497,8 +502,17 @@ class Scope : public Widget
 
 	void trace(int osc, display::Color c);
 	void current(Shown& v) const;
+	void draw_graticule();
+	void draw_live();
+	// Turn a fresh capture into display points: about two cycles of the
+	// newest note from the trigger, auto-scaled.
+	void take_capture();
 
-	const params::WaveSlots& waves_;
+	static constexpr int kPoints = 200;
+	float live_[kPoints] = {};
+	bool live_on_ = false;  // showing the captured output, not the shapes
+
+	params::WaveSlots& waves_;  // non-const: taking a capture re-arms it
 	const params::Parameters& params_;
 	std::uint32_t shown_version_[2] = {~0u, ~0u};
 	Shown shown_;

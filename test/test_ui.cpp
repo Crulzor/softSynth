@@ -1205,3 +1205,47 @@ TEST_CASE("the FX page edits the three effects; MODE swaps the time knob")
 	r.tap(128, 120);  // STEREO: PING -> MONO
 	CHECK(r.params.get(Id::DelayStereo) == 0.0f);
 }
+
+TEST_CASE("the WAVE scope shows the captured output while notes sound")
+{
+	Rig r;
+	r.tap(24, 259);  // OSC tab
+	r.frame(false);
+	const auto scope = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 296, 138, 178, 100);
+	};
+	const std::vector<std::uint16_t> shapes = scope();
+
+	// A capture with a note sounding (a 100-sample square wave): live view.
+	std::vector<float> sq(dsp::ScopeTap::kSize + 400);
+	for(std::size_t i = 0; i < sq.size(); ++i)
+	{
+		sq[i] = ((i / 50) % 2 == 0) ? -0.3f : 0.3f;
+	}
+	r.waves.scope.feed(sq.data(), static_cast<int>(sq.size()), 100.0f);
+	REQUIRE(r.waves.scope.ready());
+	r.frame(false);
+	CHECK_FALSE(r.waves.scope.ready());  // the UI took it and re-armed
+	const std::vector<std::uint16_t> live = scope();
+	CHECK(live != shapes);
+
+	// A capture with nothing sounding: back to the shapes.
+	std::vector<float> quiet(dsp::ScopeTap::kMaxWait + dsp::ScopeTap::kSize + 8,
+	                         0.0f);
+	r.waves.scope.feed(quiet.data(), static_cast<int>(quiet.size()), 0.0f);
+	r.frame(false);
+	CHECK(scope() == shapes);
+}
+
+TEST_CASE("the FX page's OUT section sets the master volume")
+{
+	Rig r;
+	r.tap(168, 259);  // FX tab
+	CHECK(r.params.get(Id::MasterVolume) == 0.0f);
+	// VOL: x 8..77, y 180..223.
+	r.frame(true, 43, 202);
+	r.frame(true, 43, 242);  // 40 px down
+	r.frame(false);
+	CHECK(r.params.get(Id::MasterVolume) < -10.0f);
+}

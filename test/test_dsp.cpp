@@ -1127,3 +1127,42 @@ TEST_CASE("the UI's FX name lists match the engine's tables")
 	CHECK(static_cast<int>(params::spec(params::Id::ModFxType).max) + 1 ==
 	      static_cast<int>(dsp::ModFxType::Count));
 }
+
+// --- Scope capture ---------------------------------------------------------------
+
+#include "dsp/scope_tap.hpp"
+
+TEST_CASE("the scope tap triggers on a rising zero crossing")
+{
+	static dsp::ScopeTap tap;
+	// A sine starting at a peak: the first rising zero crossing is 3/4 of a
+	// cycle in.
+	const float period = 200.0f;
+	std::vector<float> x(4000);
+	for(int i = 0; i < 4000; ++i)
+	{
+		x[i] = std::cos(2.0f * 3.14159265f * static_cast<float>(i) / period);
+	}
+	CHECK_FALSE(tap.ready());
+	tap.feed(x.data(), 4000, period);
+	REQUIRE(tap.ready());
+	CHECK(tap.period() == period);
+	std::vector<float> cap(dsp::ScopeTap::kSize);
+	tap.take(cap.data());
+	CHECK_FALSE(tap.ready());       // re-armed
+	CHECK(cap[0] >= 0.0f);          // starts at the crossing ...
+	CHECK(cap[0] < 0.05f);
+	CHECK(cap[10] > cap[0]);        // ... going up
+	CHECK(cap[50] == doctest::Approx(1.0f).epsilon(0.01));  // a quarter on
+	CHECK(tap.count() == 1);
+}
+
+TEST_CASE("the scope tap free-runs when nothing crosses zero")
+{
+	static dsp::ScopeTap tap;
+	std::vector<float> dc(dsp::ScopeTap::kMaxWait + dsp::ScopeTap::kSize + 64,
+	                      0.25f);
+	tap.feed(dc.data(), static_cast<int>(dc.size()), 0.0f);
+	REQUIRE(tap.ready());
+	CHECK(tap.period() == 0.0f);
+}

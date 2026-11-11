@@ -27,7 +27,11 @@ constexpr Rect knob(int row, int col)
 	return Rect{172 + col * 76, kRuleY[row] + 12, 70, kCellH};
 }
 
-constexpr const char* kTitles[3] = {"MOD FX", "DELAY", "REVERB"};
+constexpr const char* kTitles[2] = {"MOD FX", "DELAY"};
+// Row 3 holds two sections: OUT (master volume) on the left, REVERB under
+// its knobs on the right.
+constexpr int kOutW = 158;
+constexpr int kReverbX = 248;
 
 }  // namespace
 
@@ -49,13 +53,15 @@ FxPage::FxPage(Ctx ctx)
       rev_decay_(knob(2, 1), ctx.params, Id::ReverbDecay),
       rev_damp_(knob(2, 2), ctx.params, Id::ReverbDamp),
       rev_mix_(knob(2, 3), ctx.params, Id::ReverbMix),
+      volume_(Rect{8, kRuleY[2] + 12, 70, kCellH}, ctx.params,
+	          Id::MasterVolume),
       params_(ctx.params)
 {
 	Widget* all[] = {&mod_type_,   &mod_mode_, &mod_rate_,  &mod_len_,
 	                 &mod_depth_,  &mod_fbk_,  &mod_mix_,   &dly_mode_,
 	                 &dly_stereo_, &dly_time_, &dly_len_,   &dly_fbk_,
 	                 &dly_tone_,   &dly_mix_,  &rev_decay_, &rev_damp_,
-	                 &rev_mix_};
+	                 &rev_mix_,    &volume_};
 	int n = 0;
 	for(Widget* w : all)
 	{
@@ -90,10 +96,13 @@ bool FxPage::active(const Widget* w) const
 void FxPage::redraw_all()
 {
 	display::fill(theme::kBackground);
-	for(int r = 0; r < 3; ++r)
+	for(int r = 0; r < 2; ++r)
 	{
 		draw_section(8, kRuleY[r], kPageW - 16, kTitles[r], theme::kFxAccent);
 	}
+	draw_section(8, kRuleY[2], kOutW, "OUT", theme::kFxAccent);
+	draw_section(kReverbX, kRuleY[2], kPageW - 8 - kReverbX, "REVERB",
+	             theme::kFxAccent);
 	for(Widget* w : widgets_)
 	{
 		w->invalidate();

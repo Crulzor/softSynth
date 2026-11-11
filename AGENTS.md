@@ -620,3 +620,26 @@ the dbg page".
 - Next levers if CPU gets tight: enable the D-cache (needs cache
   maintenance for the framebuffers / DMA buffers), phaser tanh via the
   ladder's table, delay lines can't move to faster RAM (192 KB).
+
+## Done: master volume + live scope (2026-11-11)
+
+Bart tested the board thoroughly after phase one ("the first phase of this is
+done and i'm impressed"; oscillator quality can improve - he plans his own
+bitcrushed-sine harmonic oscillator, that's *his* job). He asked for a gain
+control for the whole synth ("maybe under the seq page?") and for the scope
+to show the final wave before the FX (after filtering).
+- **Master volume**: `MasterVolume` param in dB (-60 = off .. +6, default 0
+  = unchanged level), applied in `app.cpp` after the FX, ramped per block,
+  before the soft clip. Put on the **FX page** (OUT section, bottom left),
+  not SEQ: the SEQ top bar is full and the end of the chain is the natural
+  home - told Bart it can move. Knob rings are bipolar only for ranges
+  symmetric about zero now (the dB range drew oddly).
+- **Live scope**: `dsp::ScopeTap` (header-only, pure; member of
+  `params::WaveSlots`): armed -> rising zero crossing (or free-run after
+  2048 samples) -> 1024 int16 samples -> ready; UI takes + re-arms. Fed in
+  `render_block` with the engine's mono output and the newest voice's
+  period (`Engine::newest_note()`). `Scope` shows ~2 cycles auto-scaled
+  ("OUT"), or the old shape preview when the capture's period is 0.
+  Verified on the board: ~30 captures/s, period 326.9 samples = D3 (the
+  newest note of the test chord). Tests 131/131. Flash 104 KB, DTCM 99 KB.
+- Next on Bart's side: testing with the BeatStep Pro (USB-MIDI + clock).

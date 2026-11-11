@@ -657,6 +657,14 @@ at SHP, with its PW applied), osc 1 in orange and osc 2 in white, each brighter 
 MIX lets through. It redraws when a slot, SHP or MIX changes. (It draws the
 shapes from the spectra, not a sample tap of the audio output.)
 
+**While notes sound, WAVE is a real scope** (label OUT): the voices' summed
+output after the filter and envelopes, before the FX. The audio interrupt
+feeds `dsp::ScopeTap` (in `params::WaveSlots`), which waits for a rising zero
+crossing, records 1024 samples (~21 ms) and hands them over; the scope
+shows about two cycles of the newest note (its period travels with the
+capture), auto-scaled, ~30 times a second. With nothing sounding it goes back
+to the shape preview above.
+
 ### The ENV page
 
 **ATK / DEC / SUS / REL** knobs across the top, and a read-only preview of the
@@ -710,7 +718,8 @@ Three rows under lime section rules — **MOD FX**: TYPE (PHSR / FLNG / CHRS),
 MODE (FREE / SYNC), RATE or LEN, DEPTH, FBK, MIX; **DELAY**: MODE, STEREO
 (MONO / PING), MS or LEN, FBK, TONE, MIX; **REVERB**: DECAY, DAMP, MIX. MIX is
 always the right-hand column and is the effect's wet level (0 = off, and not
-processed). As on the MOD page the time knob shows the free value or the
+processed). Bottom left, **OUT VOL**: the master volume in dB (−60 = off …
++6, default 0), the very last stage before the soft clip, ramped per block. As on the MOD page the time knob shows the free value or the
 synced length depending on MODE.
 
 ### Widget behaviour

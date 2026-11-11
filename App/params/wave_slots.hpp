@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cstdint>
 
+#include "dsp/scope_tap.hpp"
 #include "dsp/spectrum.hpp"
 
 namespace params
@@ -79,6 +80,10 @@ class WaveSlots
 	float live_shape(int osc) const { return live_shape_[osc]; }
 	float live_mix() const { return live_mix_; }
 	float live_pw(int osc) const { return live_pw_[osc]; }
+
+	// The engine's output (after filter and envelopes, before the FX) as a
+	// triggered capture, for the WAVE scope. The audio interrupt feeds it.
+	dsp::ScopeTap scope;
 
 	// Audio side (and the UI's drawing) ----------------------------------
 
