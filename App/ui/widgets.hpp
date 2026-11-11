@@ -21,6 +21,7 @@
 #include <cstdint>
 
 #include "params/parameters.hpp"
+#include "params/wave_slots.hpp"
 #include "sequencer/pattern.hpp"
 #include "sequencer/sequencer.hpp"
 #include "ui/theme.hpp"
@@ -242,9 +243,11 @@ private:
 	bool active_ = false;
 };
 
-// 4x4 step grid. Tap a step: toggle it and select it. Hold a step: select it
-// without toggling and ask for the note picker. An on-step is a cell tinted
-// in the accent with its note name large in the middle; the step the
+// 4x4 step grid. Tap a step: toggle it and select it (tapping a tied step
+// un-ties it). Hold a step: select it without toggling and ask for the note
+// picker. An on-step is a cell tinted in the accent with its note name large
+// in the middle and its chord, if any, under it; a tied step is a bar
+// running through the cell, carrying the previous step on. The step the
 // sequencer is playing (Transport::step) gets an accent outline, the selected
 // one a white one; beat numbers (1, 5, 9, 13) are brighter.
 class StepGrid : public Widget
@@ -288,7 +291,9 @@ private:
 
 	// What each cell showed at its last draw, for sync().
 	bool shown_on_[sequencer::kSteps] = {};
+	bool shown_tie_[sequencer::kSteps] = {};
 	std::uint8_t shown_note_[sequencer::kSteps] = {};
+	std::uint8_t shown_chord_[sequencer::kSteps] = {};
 
 	// Touch in progress.
 	int press_step_ = -1;  // step under the finger at press
@@ -457,18 +462,165 @@ private:
 	display::Color badge_{0, 0, 0};
 };
 
-// Oscilloscope slot: a panel cell with a graticule (quarter divisions, a
-// brighter zero line) and the trace in the widget's accent. Display only, no
-// touch. For now there is no sample source, so the trace is the flat zero
-// line; the source (a snapshot of the oscillator output handed from the
-// audio side) gets wired in here once the real oscillator lands.
+// The OSC page's WAVE display: one cycle of each oscillator's current shape
+// - its two slots blended at the SHP position - over a graticule (quarter
+// divisions, a brighter zero line). Osc 1 in the accent, osc 2 in white,
+// each brighter the more of it the MIX lets through. Redraws whenever a
+// slot, a SHP knob or the MIX changes. Display only, no touch.
 class Scope : public Widget
 {
    public:
-	explicit Scope(Rect r) : Widget(r) {}
+	Scope(Rect r, const params::WaveSlots& waves,
+	      const params::Parameters& params)
+	    : Widget(r), waves_(waves), params_(params)
+	{
+	}
+
+	void sync() override;
 
    protected:
 	void draw() override;
+
+   private:
+	void trace(int osc, float shape, display::Color c);
+
+	const params::WaveSlots& waves_;
+	const params::Parameters& params_;
+	std::uint32_t shown_version_[2] = {~0u, ~0u};
+	float shown_shape_[2] = {-1.0f, -1.0f};
+	float shown_mix_ = -1.0f;
+};
+
+// Tap to pick an oscillator's basic wave (SIN -> TRI -> SAW -> SQR -> ...).
+// It goes into both of the oscillator's slots, so the oscillator plays just
+// that wave. The name is dimmed once a slot has been randomised since.
+class WaveButton : public Widget
+{
+   public:
+	WaveButton(Rect r, params::WaveSlots& waves, int osc)
+	    : Widget(r), waves_(waves), osc_(osc)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+	void release(std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	params::WaveSlots& waves_;
+	int osc_;
+	std::uint32_t shown_version_ = ~0u;
+	bool pressed_ = false;
+};
+
+// One of an oscillator's two morph slots (A or B): tap to roll a new random
+// waveshape into it. Shows the slot letter and a small picture of the shape
+// it holds, lit in the accent when it is a random one.
+class SlotButton : public Widget
+{
+   public:
+	SlotButton(Rect r, params::WaveSlots& waves, int osc, int slot)
+	    : Widget(r), waves_(waves), osc_(osc), slot_(slot)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+	void release(std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	params::WaveSlots& waves_;
+	int osc_;
+	int slot_;
+	std::uint32_t shown_version_ = ~0u;
+	bool pressed_ = false;
+};
+
+// SEQ page: the selected step's chord. Tap to open the chord picker.
+class ChordButton : public Widget
+{
+   public:
+	ChordButton(Rect r, const StepGrid& grid, const sequencer::Pattern& pattern)
+	    : Widget(r), grid_(grid), pattern_(pattern)
+	{
+	}
+
+	// True once after a tap while a step is selected.
+	bool take_request();
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	const StepGrid& grid_;
+	const sequencer::Pattern& pattern_;
+	int shown_step_ = -2;
+	std::uint8_t shown_chord_ = 0xFF;
+	bool request_ = false;
+};
+
+// SEQ page: tie the selected step to the one before it (tap to toggle).
+// Lit while the selected step is tied.
+class TieButton : public Widget
+{
+   public:
+	TieButton(Rect r, const StepGrid& grid, sequencer::Pattern& pattern)
+	    : Widget(r), grid_(grid), pattern_(pattern)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	const StepGrid& grid_;
+	sequencer::Pattern& pattern_;
+	int shown_step_ = -2;
+	bool shown_tie_ = false;
+};
+
+// Modal chord chooser over the step grid: every chord as a 5 x 4 grid of
+// names, the step's current one lit. Picking one sets the step's chord,
+// switches the step on (and un-ties it) and closes.
+class ChordPicker : public Widget
+{
+   public:
+	static constexpr int kCols = 5;
+	static constexpr int kRows = 4;
+
+	ChordPicker(Rect r, sequencer::Pattern& pattern)
+	    : Widget(r), pattern_(pattern)
+	{
+	}
+
+	void open(int step);
+	void close() { visible_ = false; }
+	bool visible() const { return visible_; }
+
+	// For tests: the button for chord `i`.
+	Rect button(int i) const;
+
+	void press(int x, int y, std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	sequencer::Pattern& pattern_;
+	bool visible_ = false;
+	int step_ = 0;
 };
 
 // Tap to cycle an enum value one step (wrapping); shows the current entry's

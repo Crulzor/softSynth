@@ -41,7 +41,8 @@ class Ui
 {
 public:
 	Ui(params::Parameters& params, sequencer::Pattern& pattern,
-	   sequencer::Transport& transport, modulation::Matrix& matrix);
+	   sequencer::Transport& transport, modulation::Matrix& matrix,
+	   params::WaveSlots& waves);
 
 	// Clear the screen and draw the current page and the tab bar.
 	void redraw_all();

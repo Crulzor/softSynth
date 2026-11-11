@@ -26,7 +26,15 @@ set(APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../App)
 
 # Pure DSP sources, shared by the firmware and by these host tools.
 add_library(dsp STATIC
-    ${APP_DIR}/dsp/oscillator.cpp
+    ${APP_DIR}/dsp/additive_osc.cpp
+    ${APP_DIR}/dsp/engine.cpp
+    ${APP_DIR}/dsp/envelope.cpp
+    ${APP_DIR}/dsp/ladder.cpp
+    ${APP_DIR}/dsp/sine_table.cpp
+    ${APP_DIR}/dsp/spectrum.cpp
+    ${APP_DIR}/dsp/voice.cpp
+    ${APP_DIR}/sequencer/chords.cpp
+    ${APP_DIR}/sequencer/player.cpp
     ${APP_DIR}/sequencer/sequencer.cpp
 )
 target_include_directories(dsp PUBLIC ${APP_DIR})
@@ -38,6 +46,7 @@ add_library(ui STATIC
     ${APP_DIR}/display_draw.cpp
     ${APP_DIR}/midi/midi.cpp
     ${APP_DIR}/params/parameters.cpp
+    ${APP_DIR}/params/wave_slots.cpp
     ${APP_DIR}/ui/widgets.cpp
     ${APP_DIR}/ui/debug_page.cpp
     ${APP_DIR}/ui/midi_page.cpp
@@ -50,6 +59,7 @@ add_library(ui STATIC
 )
 target_include_directories(ui PUBLIC ${APP_DIR})
 target_compile_options(ui PRIVATE -Wall -Wextra)
+target_link_libraries(ui PUBLIC dsp)  # spectra, chord names
 
 # --- doctest (single-header unit test framework) ----------------------------
 # doctest 2.4.11's CMakeLists declares a pre-3.5 minimum, which CMake 4 rejects;
@@ -67,7 +77,7 @@ FetchContent_MakeAvailable(doctest)
 enable_testing()
 add_executable(dsp_tests
     test_main.cpp
-    test_oscillator.cpp
+    test_dsp.cpp
     test_midi.cpp
     test_parameters.cpp
     test_sequencer.cpp

@@ -20,7 +20,8 @@
 // lands; the UI only refers to parameters by Id and reads everything else
 // from the Spec. Modulation routing (which LFO drives what, by how much) does
 // not live here: it is modulation::Matrix, a plain data set the same way this
-// one is.
+// one is. Neither do the oscillators' waveshapes: those are 32-coefficient
+// spectra, params::WaveSlots (wave_slots.hpp).
 #pragma once
 
 #include <cstdint>
@@ -48,6 +49,7 @@ enum class Id : std::uint8_t
 
 	FilterCutoff,
 	FilterResonance,
+	FilterDrive,
 
 	Tempo,  // sequencer BPM
 

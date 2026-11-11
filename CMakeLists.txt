@@ -54,9 +54,18 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
     # HAL-free, also host-built + unit-tested under test/
     App/display_draw.cpp
-    App/dsp/oscillator.cpp
+    App/dsp/additive_osc.cpp
+    App/dsp/engine.cpp
+    App/dsp/envelope.cpp
+    App/dsp/ladder.cpp
+    App/dsp/sine_table.cpp
+    App/dsp/spectrum.cpp
+    App/dsp/voice.cpp
     App/midi/midi.cpp
     App/params/parameters.cpp
+    App/params/wave_slots.cpp
+    App/sequencer/chords.cpp
+    App/sequencer/player.cpp
     App/sequencer/sequencer.cpp
     App/ui/widgets.cpp
     App/ui/debug_page.cpp
@@ -88,6 +97,45 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/platform/usbh/usbh_conf.c
     App/platform/usbh/usbh_midi.c
 )
+
+# The DSP runs in the audio interrupt (12 additive oscillators + 6 ladder
+# filters per block): build it optimised even in Debug, where everything else
+# is -O0. -ffp-contract=fast lets GCC fuse multiply-adds (VFMA), which strict
+# -std=c++17 otherwise turns off.
+set_source_files_properties(
+    App/dsp/additive_osc.cpp
+    App/dsp/engine.cpp
+    App/dsp/envelope.cpp
+    App/dsp/ladder.cpp
+    App/dsp/voice.cpp
+    PROPERTIES COMPILE_OPTIONS "-O2;-ffp-contract=fast")
+
+# The HAL-free UI / model code is most of the flash image, and at -O0 it no
+# longer fits the 128 KB with the synth engine in. -Og keeps it debuggable
+# (it is what GCC recommends for debugging) at a fraction of the size.
+# Release builds use -Os for everything anyway; these options come after the
+# build type's -O0, so they win in Debug only where it matters.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set_source_files_properties(
+        App/display_draw.cpp
+        App/midi/midi.cpp
+        App/params/parameters.cpp
+        App/params/wave_slots.cpp
+        App/sequencer/chords.cpp
+        App/sequencer/player.cpp
+        App/sequencer/sequencer.cpp
+        App/dsp/sine_table.cpp
+        App/dsp/spectrum.cpp
+        App/ui/widgets.cpp
+        App/ui/debug_page.cpp
+        App/ui/midi_page.cpp
+        App/ui/env_page.cpp
+        App/ui/mod_page.cpp
+        App/ui/osc_page.cpp
+        App/ui/seq_page.cpp
+        App/ui/ui.cpp
+        PROPERTIES COMPILE_OPTIONS "-Og")
+endif()
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

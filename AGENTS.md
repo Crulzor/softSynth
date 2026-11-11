@@ -4,10 +4,13 @@ Read `README.md` and `ARCHITECTURE.md` first — they are the source of truth an
 kept current. This file is only the working context the docs can't express.
 
 ## Division of labour
-- **Bart (the user)** writes the oscillator and filter DSP himself, in a *separate
-  repo*. Expect that DSP to land here as new/rewritten files under `App/dsp/`
-  (voice, engine, etc.). Don't redesign or "improve" his DSP; help wire it in,
-  test it on the host, and audition it via `render_wav`.
+- **Bart (the user)** prototypes oscillator / filter ideas in his own sandbox
+  (`~/repos/kladblok`, not a git repo — see its `docs/AGENTS.md`). On
+  2026-11-11 he asked the assistant to write the real oscillator, filter and
+  6-voice engine here (`App/dsp/`, see "Done: synth engine" below). From now
+  on treat `App/dsp/` as shared: changes to its *sound* (spectra, filter
+  model, envelope curves, gain staging) are his call — propose, don't just
+  change.
 - **The assistant** owns UI + configuration in this repo: `App/ui/`,
   `App/params/`, `App/sequencer/` (the pattern/transport side), and the glue in
   `App/app.cpp`.
@@ -31,24 +34,22 @@ kept current. This file is only the working context the docs can't express.
   a one-shot widget change (a cycled label) from ghosting against the stale
   buffer while the tab bar keeps the pair flipping. Target + host stand-in
   both converge; idle cost stays zero.
-- `App/dsp/oscillator.*` (PolyBLEP sine/saw/square/triangle) is a **throwaway
-  test oscillator** — its only job is to prove the signal path works end to
-  end. It is *not* a prototype of the real design. The real additive
-  32-harmonic sine-table oscillator (ARCHITECTURE.md §7) is being written by
-  Bart in the separate repo — as of 2026-11-05 he is actively on the
-  oscillators and filters — and will land here. When it does, update
-  §6/§7/§10 of ARCHITECTURE.md to match reality (and the test oscillator
-  retires or stays purely as a path test — ask).
-- The audio ISR (`app.cpp::audio_callback`) renders the throwaway
-  `dsp::Oscillator` from MIDI notes: one voice, latest-wins, saw,
-  vel/127 × 0.35 gain (see the USB-MIDI "Done" section below). `e.offset`
-  from the sequencer is still the planned sample-accurate hook for the
-  real engine's `engine.note_on`.
+- The audio ISR (`app.cpp::audio_callback`) runs `dsp::Engine` (6 voices):
+  MIDI events drained from the parser's FIFO (tag 0), then the sequencer
+  clock → `sequencer::Player` (tag 1); the block is split at the step's /
+  gate's frame for sample accuracy. The old PolyBLEP `dsp::Oscillator` is
+  deleted (git history has it).
 - Params set is a first-draft sized for the multi-page UI; it will
   grow/re-range as the real DSP lands (UI only addresses params by
-  `params::Id`, so that is the intended churn point).
+  `params::Id`, so that is the intended churn point). The waveshapes are
+  not params: they are `params::WaveSlots` (per osc A/B spectra).
 
 ## Workflow rules
+- **Flash is tight** (Debug 121020 B = 92.3 % after the engine landed).
+  Debug builds `App/dsp/` engine files at `-O2 -ffp-contract=fast` (CPU) and
+  the HAL-free UI/model files at `-Og` (size) — `CMakeLists.txt`. A new
+  `.cpp` under `App/ui/` etc. should join that `-Og` list. Release (`-Os`)
+  is 79.7 KB.
 - DSP/params/ui/`display_draw` compile in **both** builds. Any change under
   `App/` that the host build compiles must keep the host build green:
   `cmake -S test -B test/build && cmake --build test/build &&
@@ -379,3 +380,73 @@ only, not compiled), `CMakeLists.txt`, `cmake/stm32cubemx/CMakeLists.txt`,
 `Src/main.c`, `Src/stm32h7xx_it.c`, `Src/stm32h7xx_hal_msp.c`, `docs/`.
 **Baselines**: host suite 50/50; flash text 105364 B (80.39 %);
 DTCM ≈ 8.5/128 KB.
+
+## Done: synth engine — additive oscillators, ladder filter, 6 voices, chords + ties (2026-11-11)
+
+Bart asked (in order): the oscillators (3 basic waves selectable, plus two
+buttons per oscillator that each roll a random waveshape into a slot the
+oscillator remembers, SHP morphing between the two Fourier series), then a
+"smooth, Moog style" filter "with as much harmonics as possible", then 6
+voices per spec, then a SEQ chord option (all the usual chords) and ties
+between steps. Reference for the oscillator: `~/repos/kladblok`
+(`AdditiveOsc` — phase × harmonic into the sine table; its `morph()` and
+`make_saw/triangle` are deliberately left for Bart there, don't fill them in).
+
+**Decisions taken without asking — flagged to Bart, easy to change:**
+- **WAV puts the basic wave in both slots** (so the oscillator plays exactly
+  that wave whatever SHP is); A / B each roll a random shape into their own
+  slot. Alternative: WAV writes slot A only (then SHP 0 = the basic wave).
+  One line in `WaveButton::press` / `WaveSlots::set_basic`.
+- **Four basic waves**, SIN TRI SAW SQR (he said "the 3 basic waves"; the
+  spec lists four). Drop SIN by trimming `spectrum::Basic`.
+- **DRV knob added** to the filter (`params::Id::FilterDrive`) for the
+  "harmonics" ask.
+- **Gate = half a step** (`Sequencer::kGate`); ties extend it.
+- **The mod matrix and LFOs are now live** (they were UI-only); ENV → CUT is
+  the filter envelope. Not asked for explicitly, but "as per spec".
+- Slots are **not persisted** across power cycles (no preset storage yet).
+
+**What landed** (details in ARCHITECTURE.md §4, §7, §11):
+- `dsp/sine_table` (2048 pts, RAM, `init()` in `app_main` before audio),
+  `dsp/spectrum` (basic + random spectra, peak-normalised, `render_cycle`),
+  `dsp/additive_osc` (sin/cos from the table, harmonics by the
+  angle-addition recurrence in two chains; morph as two running sums so SHP
+  ramps per sample; per-block band-limit fade 0.41–0.45 fs),
+  `dsp/ladder` (Huovilainen nonlinear ladder, 2× OS, passband comp., tanh
+  output, table tanh; **tuning and resonance corrections were measured with probe
+  programs and fitted** — peak within 0.6 % of cutoff 100 Hz–20 kHz,
+  self-oscillation at RES ≈ 0.91 at any cutoff), `dsp/envelope` (ADSR + LFO),
+  `dsp/patch`, `dsp/voice`, `dsp/engine` (allocation: retrigger same
+  note+tag → free → quietest releasing → oldest; spectra glide ~5 ms).
+- `params/wave_slots` (double-buffered A/B per osc), `midi` event FIFO
+  (+ all-notes-off when the USB link drops), `sequencer/chords` (19 shapes),
+  `sequencer/player`, gate events in `Sequencer::process`.
+- UI: OSC page re-laid out on 56-px cells (PIT SHP OCT + WAV/A/B stack, MIX
+  48 wide so "127" fits, CUT RES DRV, WAVE scope drawing both oscillators'
+  morphed shapes); SEQ page CHORD button + `ChordPicker`, TIE button, grid
+  shows chord names and tie bars; tab-bar pips count ties.
+- Tests 94/94 (`test_dsp.cpp` replaces `test_oscillator.cpp`; new sequencer,
+  MIDI-queue and UI cases). `render_wav` is a ~25 s engine tour;
+  `render_ui` adds `ui_chords.ppm`.
+
+**Hardware bring-up (2026-11-11, same day)**: flashed. First boot
+HardFaulted (imprecise bus fault, a `memset` running off the end of DTCM):
+`audio_out::start()` pre-fills the **whole** DMA buffer in one callback
+(128 frames), and the new callback rendered into a 64-frame stack buffer.
+Fixed twice over: `audio_callback` cuts any request into `kBlockSize`
+blocks, and `Engine::render` chunks long calls itself (host test
+`a render call longer than one block is cut into blocks`). Lesson: the
+render callback's `frames` is not always one block.
+CPU measured over SWD (write a pattern + `g_transport.run` with
+`STM32_Programmer_CLI mode=HOTPLUG -w32`, read `cpu_load`'s
+`g_sum/g_count/g_max`, budget 640000 cycles/block): idle 2.8 %, worst case
+(C2 min9 tied, 5–6 voices × all 32 harmonics) 74 / 87.5 % peak at first →
+**59.6 / 70.4 %** after the oscillator fast path + table tanh. Profile:
+~2/3 oscillators, ~1/4 ladder.
+
+**Not done / next**:
+1. **Listen on the board** — not auditioned by ear yet.
+2. Level staging is by ear on the host only (voice gain 0.3, master soft
+   clip); may want a master volume param.
+3. kladblok's ImPlot scope shows the real output; the OSC page scope draws
+   the shapes from the spectra instead (no audio tap yet).

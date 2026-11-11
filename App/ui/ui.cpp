@@ -7,8 +7,9 @@ namespace ui
 {
 
 Ui::Ui(params::Parameters& params, sequencer::Pattern& pattern,
-       sequencer::Transport& transport, modulation::Matrix& matrix)
-    : ctx_{params, pattern, transport, matrix},
+       sequencer::Transport& transport, modulation::Matrix& matrix,
+       params::WaveSlots& waves)
+    : ctx_{params, pattern, transport, matrix, waves},
       osc_(ctx_),
       env_(ctx_),
       mod_(ctx_),

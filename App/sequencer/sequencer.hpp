@@ -28,11 +28,18 @@ struct Transport
 class Sequencer
 {
 public:
-	// What happened in one block.
+	// Fraction of a step the gate stays open for: a step's notes are
+	// released halfway through it, unless the next step ties them on.
+	static constexpr float kGate = 0.5f;
+
+	// What happened in one block. A step lasts >= 2400 frames (16ths at 300
+	// BPM) and the gate closes half a step after it starts, so a 64-frame
+	// block holds at most one of the two.
 	struct Event
 	{
-		int step;    // step that started in this block, or -1 if none
-		int offset;  // frame within the block where it started
+		int step;      // step that started in this block, or -1 if none
+		int offset;    // frame within the block where it started
+		int gate_off;  // frame where the current step's gate closed, or -1
 	};
 
 	explicit Sequencer(float sample_rate) : sample_rate_(sample_rate) {}
@@ -40,7 +47,7 @@ public:
 	// Advance by one block of `frames` at `bpm`. A rising `run` starts from
 	// step 0 at the top of the block; a falling `run` stops. Returns the step
 	// that started in this block, so the engine can fire its note_on at
-	// `offset` (at most one per block: a step is >= 2400 frames at 300 BPM).
+	// `offset`, or the frame where the playing step's gate closed.
 	Event process(bool run, float bpm, int frames);
 
 	bool running() const { return running_; }

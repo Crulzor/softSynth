@@ -2,7 +2,7 @@
 //
 // Unit tests for the pure USB-MIDI cable-packet parser (App/midi/).
 // Drives midi::Parser exactly the way the USBH bulk-IN hook will: 4-byte
-// packets in, one packed atomic note state out.
+// packets in, queued note events and one packed atomic note state out.
 #include <doctest/doctest.h>
 
 #include "midi/midi.hpp"
@@ -199,4 +199,58 @@ TEST_CASE("the packet counter counts complete 4-byte packets only")
 	CHECK(p.packets.load() == 2);
 	CHECK(Parser::active(s(p)));
 	CHECK(Parser::note(s(p)) == 61);  // latest-wins across the chunk
+}
+
+TEST_CASE("every note-on and note-off is queued in order for the engine")
+{
+	Parser p;
+	feed(p, 0x09, 0x90, 60, 100);  // C4 on
+	feed(p, 0x09, 0x90, 64, 90);   // E4 on (both held: polyphonic)
+	feed(p, 0x0B, 0xB0, 1, 64);    // CC: not queued
+	feed(p, 0x08, 0x80, 60, 0);    // C4 off
+	feed(p, 0x09, 0x91, 67, 0);    // vel-0 on, channel 2 = off
+
+	midi::NoteEvent e{};
+	REQUIRE(p.events.pop(e));
+	CHECK(e.kind == midi::NoteEvent::On);
+	CHECK(e.note == 60);
+	CHECK(e.velocity == 100);
+	REQUIRE(p.events.pop(e));
+	CHECK(e.kind == midi::NoteEvent::On);
+	CHECK(e.note == 64);
+	REQUIRE(p.events.pop(e));
+	CHECK(e.kind == midi::NoteEvent::Off);
+	CHECK(e.note == 60);
+	REQUIRE(p.events.pop(e));
+	CHECK(e.kind == midi::NoteEvent::Off);
+	CHECK(e.note == 67);
+	CHECK(e.channel == 1);
+	CHECK_FALSE(p.events.pop(e));
+}
+
+TEST_CASE("a full event queue drops new events instead of overwriting")
+{
+	midi::EventQueue q;
+	for(std::uint32_t i = 0; i < midi::EventQueue::kSize; ++i)
+	{
+		CHECK(q.push(midi::NoteEvent{midi::NoteEvent::On,
+		                             static_cast<std::uint8_t>(i), 1, 0}));
+	}
+	CHECK_FALSE(q.push(midi::NoteEvent{midi::NoteEvent::On, 99, 1, 0}));
+	midi::NoteEvent e{};
+	REQUIRE(q.pop(e));
+	CHECK(e.note == 0);  // the oldest survives
+	CHECK(q.push(midi::NoteEvent{midi::NoteEvent::On, 100, 1, 0}));
+}
+
+TEST_CASE("all-notes-off queues a release and clears the read-out")
+{
+	Parser p;
+	feed(p, 0x09, 0x90, 60, 100);
+	p.all_notes_off();
+	CHECK_FALSE(Parser::active(s(p)));
+	midi::NoteEvent e{};
+	REQUIRE(p.events.pop(e));
+	REQUIRE(p.events.pop(e));
+	CHECK(e.kind == midi::NoteEvent::AllOff);
 }

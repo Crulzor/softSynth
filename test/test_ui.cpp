@@ -7,7 +7,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+
 #include "midi/midi.hpp"
+#include "sequencer/chords.hpp"
 #include "ui/theme.hpp"
 #include "ui/ui.hpp"
 
@@ -117,7 +120,8 @@ struct Rig
 	modulation::Matrix matrix;
 	sequencer::Pattern pattern;
 	sequencer::Transport transport;
-	ui::Ui ui{params, pattern, transport, matrix};
+	params::WaveSlots waves;
+	ui::Ui ui{params, pattern, transport, matrix, waves};
 	std::uint32_t now = 0;
 
 	Rig()
@@ -616,8 +620,9 @@ TEST_CASE("the SEQ page edits the pattern and the transport")
 	r.tap(148, 17);
 	CHECK(r.transport.run);
 
-	// The tempo slider jumps to the finger: the track centre is half tempo.
-	r.tap(349, 17);
+	// The tempo slider jumps to the finger: the track centre is half tempo
+	// (track x 358..467, mirrors seq_page.cpp + Slider::track()).
+	r.tap(413, 17);
 	CHECK(r.params.get(Id::Tempo) == 165.0f);
 
 	// The grid spans the page: step 1 sits top left.
@@ -629,10 +634,11 @@ TEST_CASE("the OSC page edits the oscillator parameters")
 {
 	Rig r;
 	r.tap(24, 259);  // OSC tab
-	// Mirrors osc_page.cpp: 76 x 100 cells at x = 8 + col * 84, rows from
-	// y = 16 and y = 138; the mix fader at x 260..303; CUT / RES at x 312 /
-	// 396 on row 1, the scope under them on row 2.
-	const int x = 140;  // the SHP cell of row 1
+	// Mirrors osc_page.cpp: 56 x 100 knob cells at x = 5 + col * 61, rows
+	// from y = 16 and y = 138; the WAV / A / B buttons at x 188..237; the
+	// mix fader at x 243..290; CUT / RES / DRV at x 296 / 357 / 418 on row
+	// 1, the scope under them on row 2.
+	const int x = 94;  // the SHP cell of row 1
 	r.frame(true, x, 60);
 	CHECK(r.params.get(Id::Osc1Shape) == 0.0f);
 	r.frame(true, x, 40);  // 20 px up
@@ -640,31 +646,104 @@ TEST_CASE("the OSC page edits the oscillator parameters")
 	r.frame(false);
 
 	// Row 2 is osc 2.
-	r.frame(true, 50, 180);
-	r.frame(true, 50, 152);  // up two steps
+	r.frame(true, 33, 180);
+	r.frame(true, 33, 152);  // up two steps
 	CHECK(r.params.get(Id::Osc2Pitch) == 2.0f);
 	r.frame(false);
 
 	// The mix fader spans both rows: dragging down moves towards osc 2.
-	r.frame(true, 282, 60);
-	r.frame(true, 282, 120);
+	r.frame(true, 267, 60);
+	r.frame(true, 267, 120);
 	CHECK(r.params.get(Id::OscMix) > 0.5f);
 	r.frame(false);
 
-	// Filter: cutoff and resonance side by side on row 1.
+	// Filter: cutoff, resonance and drive side by side on row 1.
 	const float res = r.params.get(Id::FilterResonance);
-	r.frame(true, 434, 60);
-	r.frame(true, 434, 40);
+	r.frame(true, 385, 60);
+	r.frame(true, 385, 40);
 	CHECK(r.params.get(Id::FilterResonance) > res);
+	r.frame(false);
+	const float drv = r.params.get(Id::FilterDrive);
+	r.frame(true, 446, 60);
+	r.frame(true, 446, 80);  // down: less drive
+	CHECK(r.params.get(Id::FilterDrive) < drv);
 	r.frame(false);
 
 	// The scope below them is display-only: dragging on it changes nothing.
 	const float cut = r.params.get(Id::FilterCutoff);
-	r.frame(true, 390, 190);
-	r.frame(true, 390, 150);
+	r.frame(true, 385, 190);
+	r.frame(true, 385, 150);
 	r.frame(false);
 	CHECK(r.params.get(Id::FilterCutoff) == cut);
 	CHECK(r.params.get(Id::FilterResonance) > res);
+}
+
+TEST_CASE("WAV picks a basic wave into both slots; A and B roll random shapes")
+{
+	namespace sp = dsp::spectrum;
+	Rig r;
+	r.tap(24, 259);  // OSC tab
+	// Osc 1's button stack: WAV at y 16..43, A at 52..79, B at 88..115.
+	CHECK(r.waves.basic(0) == sp::Basic::Saw);
+	r.tap(212, 30);  // WAV: saw -> square
+	CHECK(r.waves.basic(0) == sp::Basic::Square);
+	float sq[sp::kHarmonics];
+	sp::make_basic(sp::Basic::Square, sq);
+	CHECK(std::equal(sq, sq + sp::kHarmonics, r.waves.coeffs(0, 0)));
+	CHECK(std::equal(sq, sq + sp::kHarmonics, r.waves.coeffs(0, 1)));
+
+	// B rolls a random shape into slot B only, and keeps it.
+	r.tap(212, 100);
+	CHECK(r.waves.kind(0, 1) == params::WaveSlots::Kind::Random);
+	CHECK(r.waves.kind(0, 0) == params::WaveSlots::Kind::Basic);
+	CHECK(std::equal(sq, sq + sp::kHarmonics, r.waves.coeffs(0, 0)));
+	std::vector<float> b1(r.waves.coeffs(0, 1),
+	                      r.waves.coeffs(0, 1) + sp::kHarmonics);
+	CHECK_FALSE(std::equal(sq, sq + sp::kHarmonics, b1.begin()));
+	for(int i = 0; i < 10; ++i)
+	{
+		r.frame(false);
+	}
+	CHECK(std::equal(b1.begin(), b1.end(), r.waves.coeffs(0, 1)));
+
+	// Another press gives another shape; A rolls slot A.
+	r.tap(212, 100);
+	CHECK_FALSE(std::equal(b1.begin(), b1.end(), r.waves.coeffs(0, 1)));
+	r.tap(212, 66);
+	CHECK(r.waves.kind(0, 0) == params::WaveSlots::Kind::Random);
+
+	// Osc 2's stack is its own (row 2 starts at y = 138).
+	CHECK(r.waves.kind(1, 0) == params::WaveSlots::Kind::Basic);
+	r.tap(212, 188);
+	CHECK(r.waves.kind(1, 0) == params::WaveSlots::Kind::Random);
+	CHECK(r.waves.basic(1) == sp::Basic::Square);
+
+	// WAV resets both slots to the next basic wave.
+	r.tap(212, 30);
+	CHECK(r.waves.basic(0) == sp::Basic::Sine);
+	CHECK(r.waves.kind(0, 0) == params::WaveSlots::Kind::Basic);
+	CHECK(r.waves.kind(0, 1) == params::WaveSlots::Kind::Basic);
+}
+
+TEST_CASE("the WAVE scope redraws when a slot or the shape knob changes")
+{
+	Rig r;
+	r.tap(24, 259);  // OSC tab
+	r.frame(false);
+	const auto scope = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 296, 138, 178, 100);
+	};
+	const std::vector<std::uint16_t> before = scope();
+	r.tap(212, 100);  // B: random -> osc 1 morph target changes
+	r.frame(false);
+	CHECK(scope() == before);  // SHP is 0: still plain slot A
+
+	r.frame(true, 94, 60);  // SHP up: now the random B shows through
+	r.frame(true, 94, -100);
+	r.frame(false);
+	r.frame(false);
+	CHECK(scope() != before);
 }
 
 TEST_CASE("the active tab is filled with its page's accent")
@@ -790,4 +869,89 @@ TEST_CASE("the SEQ playhead is an accent outline on its step")
 	CHECK(pixel_at(cx, cy) != px565(ui::theme::kSeqAccent));
 	r.transport.run = false;
 	r.transport.step = -1;
+}
+
+TEST_CASE("the chord button opens a picker that sets the step's chord")
+{
+	Rig r;
+	r.tap(168, 259);  // SEQ tab
+	r.tap(60, 61);    // step 1 on + selected
+	REQUIRE(r.pattern.steps[0].on);
+	r.tap(208, 17);   // CHORD
+	CHECK(r.ui.page() == 3);
+	// Picker buttons: 5 x 4 over the grid (0, 35, 480, 211); MIN7 is 11.
+	const int minor7 = static_cast<int>(sequencer::Chord::Min7);
+	const int bx = (minor7 % 5) * 96 + 48;
+	const int by = 35 + (minor7 / 5) * 52 + 26;
+	r.tap(bx, by);
+	CHECK(r.pattern.steps[0].chord == minor7);
+	CHECK(r.pattern.steps[0].on);
+
+	// A chord on an off step switches it on.
+	r.tap(140, 61);  // step 2 on
+	r.tap(140, 61);  // ... and off again, still selected
+	REQUIRE_FALSE(r.pattern.steps[1].on);
+	r.tap(208, 17);
+	r.tap(48 + 96, 35 + 26);  // MAJ
+	CHECK(r.pattern.steps[1].on);
+	CHECK(r.pattern.steps[1].chord ==
+	      static_cast<int>(sequencer::Chord::Major));
+
+	// A touch outside the picker dismisses it without a change.
+	r.tap(208, 17);
+	r.tap(400, 17);  // on the tempo bar
+	CHECK(r.pattern.steps[1].chord ==
+	      static_cast<int>(sequencer::Chord::Major));
+}
+
+TEST_CASE("TIE ties the selected step; tapping a tied step un-ties it")
+{
+	Rig r;
+	r.tap(168, 259);  // SEQ tab
+	r.tap(60, 61);    // step 1 on
+	r.tap(180, 61);   // step 2 on + selected
+	r.tap(272, 17);   // TIE
+	CHECK(r.pattern.steps[1].tie);
+	r.tap(272, 17);
+	CHECK_FALSE(r.pattern.steps[1].tie);
+	r.tap(272, 17);
+	REQUIRE(r.pattern.steps[1].tie);
+
+	// Tapping the tied cell clears the tie and leaves its own note as it was.
+	const bool on = r.pattern.steps[1].on;
+	r.tap(180, 61);
+	CHECK_FALSE(r.pattern.steps[1].tie);
+	CHECK(r.pattern.steps[1].on == on);
+
+	// Picking a note in the picker un-ties too.
+	r.tap(272, 17);
+	REQUIRE(r.pattern.steps[1].tie);
+	r.tap(60, 17);  // note box -> picker for step 2
+	REQUIRE(r.ui.page() == 3);
+	r.tap(240, 200);  // a white key
+	CHECK_FALSE(r.pattern.steps[1].tie);
+	CHECK(r.pattern.steps[1].on);
+}
+
+TEST_CASE("the grid shows a step's chord and a tie")
+{
+	Rig r;
+	r.tap(168, 259);  // SEQ tab
+	r.frame(false);
+	const auto cell = [&](int i)
+	{
+		return grab_rect(display::detail::g_framebuffer, (i % 4) * 120 + 2,
+		                 35 + (i / 4) * 52 + 2, 116, 48);
+	};
+	r.pattern.steps[0].on = true;
+	r.frame(false);
+	const std::vector<std::uint16_t> plain = cell(0);
+	r.pattern.steps[0].chord = static_cast<std::uint8_t>(sequencer::Chord::Dim);
+	r.frame(false);
+	CHECK(cell(0) != plain);  // redrawn with the chord name
+
+	const std::vector<std::uint16_t> empty = cell(1);
+	r.pattern.steps[1].tie = true;
+	r.frame(false);
+	CHECK(cell(1) != empty);
 }

@@ -4,6 +4,8 @@
 #include <cmath>
 
 #include "display.hpp"
+#include "dsp/spectrum.hpp"
+#include "sequencer/chords.hpp"
 #include "ui/theme.hpp"
 
 namespace ui
@@ -601,7 +603,8 @@ void StepGrid::sync()
 	for(int i = 0; i < sequencer::kSteps; ++i)
 	{
 		const sequencer::Step& s = pattern_.steps[i];
-		if(s.on != shown_on_[i] || (s.on && s.note != shown_note_[i]))
+		if(s.on != shown_on_[i] || s.tie != shown_tie_[i] ||
+		   (s.on && (s.note != shown_note_[i] || s.chord != shown_chord_[i])))
 		{
 			mark(i);
 		}
@@ -637,7 +640,14 @@ void StepGrid::release(std::uint32_t)
 	if(press_step_ >= 0 && !long_fired_ && over_step_ == press_step_)
 	{
 		sequencer::Step& s = pattern_.steps[press_step_];
-		s.on = !s.on;
+		if(s.tie)
+		{
+			s.tie = false;  // a tap on a tied step un-ties it
+		}
+		else
+		{
+			s.on = !s.on;
+		}
 		select(press_step_);
 		mark(press_step_);
 	}
@@ -665,11 +675,24 @@ void StepGrid::draw_cell(int step)
 	const Rect c = cell(step);
 	const sequencer::Step& s = pattern_.steps[step];
 	shown_on_[step] = s.on;
+	shown_tie_[step] = s.tie;
 	shown_note_[step] = s.note;
+	shown_chord_[step] = s.chord;
+	const bool on = s.on && !s.tie;
 
 	const bool playing = step == playhead_;
-	fill_cell(c, s.on ? theme::mix(theme::kPanel, accent_, playing ? 96 : 56)
-	                  : (playing ? theme::kPlayhead : theme::kPanel));
+	fill_cell(c, on ? theme::mix(theme::kPanel, accent_, playing ? 96 : 56)
+	                : (playing ? theme::kPlayhead : theme::kPanel));
+	if(s.tie)
+	{
+		// The previous step carried on: a bar right through the cell, from
+		// its left edge (where the previous step is) to its right.
+		const int cy = c.y + c.h / 2;
+		display::fill_rect(c.x, cy - 2, c.w, 5,
+		                   theme::mix(theme::kPanel, accent_, playing ? 200 : 140));
+		display::draw_text(c.x + c.w - 4 - display::text_width("TIE"),
+		                   c.y + c.h - 11, "TIE", theme::kDim);
+	}
 
 	// Outlines: the playhead in the accent, the selection in white (inset
 	// inside the playhead's when a step is both).
@@ -695,13 +718,21 @@ void StepGrid::draw_cell(int step)
 	display::draw_text(c.x + 5, c.y + 5, text,
 	                   (step % 4) == 0 ? theme::kText : theme::kDim);
 
-	if(s.on)
+	if(on)
 	{
 		// Note name as large as the cell allows: scale 3 in the SEQ page's
-		// wide cells, scale 2 in the DBG page's narrow ones.
+		// wide cells, scale 2 in the DBG page's narrow ones. A chord name
+		// goes under it, the note moving up to make room.
 		const int scale = c.w >= 100 ? 3 : 2;
+		const bool chord = s.chord != 0 && s.chord < sequencer::kChordCount;
 		format_note(s.note, text);
-		draw_centered(c, c.y + (c.h - 8 * scale) / 2 + 3, text, accent_, scale);
+		draw_centered(c, c.y + (c.h - 8 * scale) / 2 + (chord ? -2 : 3), text,
+		              accent_, scale);
+		if(chord)
+		{
+			draw_centered(c, c.y + c.h - 11, sequencer::kChordNames[s.chord],
+			              theme::mix(theme::kText, accent_, 128));
+		}
 	}
 }
 
@@ -902,6 +933,7 @@ void NotePicker::press(int x, int y, std::uint32_t)
 		sequencer::Step& s = pattern_.steps[step_];
 		s.note = static_cast<std::uint8_t>((octave_ + 1) * 12 + semi);
 		s.on = true;
+		s.tie = false;
 		close();
 	}
 }
@@ -1071,7 +1103,8 @@ void TabBar::draw_strip()
 	{
 		const bool beat = (i % 4) == 0;
 		const int h = beat ? 10 : 6;
-		display::Color c = pattern_.steps[i].on ? theme::kDim : theme::kTrack;
+		const sequencer::Step& st = pattern_.steps[i];
+		display::Color c = (st.on || st.tie) ? theme::kDim : theme::kTrack;
 		if(run && i == step)
 		{
 			c = seq;
@@ -1094,9 +1127,75 @@ void TabBar::draw_strip()
 
 // --- Scope -------------------------------------------------------------------
 
+namespace
+{
+
+// Draw one cycle of the spectrum `c` as a connected trace across
+// [x0, x0 + w) around the centre line `mid`, +-`amp` px at full scale.
+void draw_wave(const float* c, int x0, int w, int mid, int amp,
+               display::Color col)
+{
+	constexpr int kMaxPoints = 200;
+	float pts[kMaxPoints];
+	const int n = w < kMaxPoints ? w : kMaxPoints;
+	dsp::spectrum::render_cycle(c, pts, n);
+	int prev_y = mid;
+	for(int i = 0; i < n; ++i)
+	{
+		float v = pts[i];
+		v = v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
+		const int y = mid - round_to_int(v * static_cast<float>(amp));
+		if(i > 0)
+		{
+			display::draw_line(x0 + i - 1, prev_y, x0 + i, y, col);
+		}
+		prev_y = y;
+	}
+}
+
+// Blend of an oscillator's two slots at morph position `shape`.
+void blend(const params::WaveSlots& w, int osc, float shape, float* out)
+{
+	const float* a = w.coeffs(osc, 0);
+	const float* b = w.coeffs(osc, 1);
+	for(int h = 0; h < dsp::spectrum::kHarmonics; ++h)
+	{
+		out[h] = a[h] + shape * (b[h] - a[h]);
+	}
+}
+
+}  // namespace
+
+void Scope::sync()
+{
+	const float s0 = params_.get(params::Id::Osc1Shape);
+	const float s1 = params_.get(params::Id::Osc2Shape);
+	const float mix = params_.get(params::Id::OscMix);
+	if(waves_.version(0) != shown_version_[0] ||
+	   waves_.version(1) != shown_version_[1] || s0 != shown_shape_[0] ||
+	   s1 != shown_shape_[1] || mix != shown_mix_)
+	{
+		invalidate();
+	}
+}
+
+void Scope::trace(int osc, float shape, display::Color c)
+{
+	const Rect& r = rect_;
+	float coeffs[dsp::spectrum::kHarmonics];
+	blend(waves_, osc, shape, coeffs);
+	const int h = r.h - 8;
+	draw_wave(coeffs, r.x + 4, r.w - 8, r.y + 4 + h / 2, h / 2 - 3, c);
+}
+
 void Scope::draw()
 {
 	const Rect& r = rect_;
+	shown_version_[0] = waves_.version(0);
+	shown_version_[1] = waves_.version(1);
+	shown_shape_[0] = params_.get(params::Id::Osc1Shape);
+	shown_shape_[1] = params_.get(params::Id::Osc2Shape);
+	shown_mix_ = params_.get(params::Id::OscMix);
 	fill_cell(r, theme::kPanel);
 
 	// Graticule: dotted quarter divisions, a solid zero line.
@@ -1124,8 +1223,230 @@ void Scope::draw()
 	}
 	display::fill_rect(x0, mid, w, 1, theme::kTrack);
 
-	// The trace: flat until a sample source is wired in.
-	display::fill_rect(x0, mid, w, 1, theme::mix(theme::kPanel, accent_, 160));
+	// The two oscillators, each as bright as the MIX lets it through; the
+	// louder one is drawn last, on top.
+	const int lvl2 = 80 + round_to_int(176.0f * shown_mix_);
+	const int lvl1 = 80 + round_to_int(176.0f * (1.0f - shown_mix_));
+	const display::Color c1 = theme::mix(theme::kPanel, accent_, lvl1);
+	const display::Color c2 = theme::mix(theme::kPanel, theme::kText, lvl2);
+	if(shown_mix_ > 0.5f)
+	{
+		trace(0, shown_shape_[0], c1);
+		trace(1, shown_shape_[1], c2);
+	}
+	else
+	{
+		trace(1, shown_shape_[1], c2);
+		trace(0, shown_shape_[0], c1);
+	}
+	display::draw_text(r.x + 6, r.y + 5, "1", c1);
+	display::draw_text(r.x + 16, r.y + 5, "2", c2);
+}
+
+// --- WaveButton ----------------------------------------------------------------
+
+void WaveButton::sync()
+{
+	if(waves_.version(osc_) != shown_version_)
+	{
+		invalidate();
+	}
+}
+
+void WaveButton::press(int, int, std::uint32_t)
+{
+	const int count = static_cast<int>(dsp::spectrum::Basic::Count);
+	const int next = (static_cast<int>(waves_.basic(osc_)) + 1) % count;
+	waves_.set_basic(osc_, static_cast<dsp::spectrum::Basic>(next));
+	pressed_ = true;
+	invalidate();
+}
+
+void WaveButton::release(std::uint32_t)
+{
+	pressed_ = false;
+	invalidate();
+}
+
+void WaveButton::draw()
+{
+	const Rect& r = rect_;
+	shown_version_ = waves_.version(osc_);
+	const bool pure =
+	    waves_.kind(osc_, 0) == params::WaveSlots::Kind::Basic &&
+	    waves_.kind(osc_, 1) == params::WaveSlots::Kind::Basic;
+	fill_cell(r, pressed_ ? theme::kHeader : theme::kPanel);
+	const char* name =
+	    dsp::spectrum::kBasicNames[static_cast<int>(waves_.basic(osc_))];
+	draw_centered(r, r.y + (r.h - 16) / 2, name,
+	              pressed_ ? accent_ : (pure ? theme::kText : theme::kDim), 2);
+}
+
+// --- SlotButton ----------------------------------------------------------------
+
+void SlotButton::sync()
+{
+	if(waves_.version(osc_) != shown_version_)
+	{
+		invalidate();
+	}
+}
+
+void SlotButton::press(int x, int y, std::uint32_t now_ms)
+{
+	waves_.randomize(osc_, slot_,
+	                 now_ms ^ (static_cast<std::uint32_t>(x) << 20) ^
+	                     (static_cast<std::uint32_t>(y) << 10));
+	pressed_ = true;
+	invalidate();
+}
+
+void SlotButton::release(std::uint32_t)
+{
+	pressed_ = false;
+	invalidate();
+}
+
+void SlotButton::draw()
+{
+	const Rect& r = rect_;
+	shown_version_ = waves_.version(osc_);
+	const bool random =
+	    waves_.kind(osc_, slot_) == params::WaveSlots::Kind::Random;
+	fill_cell(r, pressed_ ? theme::kHeader : theme::kPanel);
+	const char letter[2] = {static_cast<char>('A' + slot_), '\0'};
+	display::draw_text(r.x + 5, r.y + (r.h - 8) / 2, letter,
+	                   random ? accent_ : theme::kDim);
+	// The shape in the slot, small.
+	const int wx = r.x + 16;
+	const int ww = r.w - 20;
+	draw_wave(waves_.coeffs(osc_, slot_), wx, ww, r.y + r.h / 2, r.h / 2 - 5,
+	          random ? accent_ : theme::kDim);
+}
+
+// --- ChordButton / TieButton ------------------------------------------------------
+
+bool ChordButton::take_request()
+{
+	const bool r = request_;
+	request_ = false;
+	return r;
+}
+
+void ChordButton::sync()
+{
+	const int step = grid_.selected();
+	if(step != shown_step_ ||
+	   (step >= 0 && pattern_.steps[step].chord != shown_chord_))
+	{
+		invalidate();
+	}
+}
+
+void ChordButton::press(int, int, std::uint32_t)
+{
+	request_ = grid_.selected() >= 0;
+}
+
+void ChordButton::draw()
+{
+	const Rect& r = rect_;
+	const int step = grid_.selected();
+	shown_step_ = step;
+	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
+	display::draw_text(r.x + 6, r.y + 3, "CHORD", theme::kDim);
+	if(step < 0)
+	{
+		draw_centered(r, r.y + 16, "--", theme::kDim);
+		return;
+	}
+	shown_chord_ = pattern_.steps[step].chord;
+	const int c = shown_chord_ < sequencer::kChordCount ? shown_chord_ : 0;
+	const char* name = c == 0 ? "--" : sequencer::kChordNames[c];
+	const int scale = display::text_width(name, 2) <= r.w - 8 ? 2 : 1;
+	draw_centered(r, scale == 2 ? r.y + 13 : r.y + 18, name,
+	              c == 0 ? theme::kDim : accent_, scale);
+}
+
+void TieButton::sync()
+{
+	const int step = grid_.selected();
+	if(step != shown_step_ ||
+	   (step >= 0 && pattern_.steps[step].tie != shown_tie_))
+	{
+		invalidate();
+	}
+}
+
+void TieButton::press(int, int, std::uint32_t)
+{
+	const int step = grid_.selected();
+	if(step >= 0)
+	{
+		sequencer::Step& s = pattern_.steps[step];
+		s.tie = !s.tie;
+	}
+}
+
+void TieButton::draw()
+{
+	const Rect& r = rect_;
+	const int step = grid_.selected();
+	shown_step_ = step;
+	shown_tie_ = step >= 0 && pattern_.steps[step].tie;
+	display::fill_rect(r.x, r.y, r.w, r.h, shown_tie_ ? accent_ : theme::kPanel);
+	draw_centered(r, r.y + (r.h - 8) / 2, "TIE",
+	              shown_tie_ ? display::colors::Black
+	                         : (step < 0 ? theme::kTrack : theme::kText));
+}
+
+// --- ChordPicker --------------------------------------------------------------------
+
+void ChordPicker::open(int step)
+{
+	step_ = step;
+	visible_ = true;
+	invalidate();
+}
+
+Rect ChordPicker::button(int i) const
+{
+	const int pw = rect_.w / kCols;
+	const int ph = rect_.h / kRows;
+	return Rect{rect_.x + (i % kCols) * pw + 2, rect_.y + (i / kCols) * ph + 2,
+	            pw - 4, ph - 4};
+}
+
+void ChordPicker::press(int x, int y, std::uint32_t)
+{
+	for(int i = 0; i < sequencer::kChordCount; ++i)
+	{
+		if(button(i).contains(x, y))
+		{
+			sequencer::Step& s = pattern_.steps[step_];
+			s.chord = static_cast<std::uint8_t>(i);
+			s.on = true;
+			s.tie = false;
+			close();
+			return;
+		}
+	}
+}
+
+void ChordPicker::draw()
+{
+	const Rect& r = rect_;
+	display::fill_rect(r.x, r.y, r.w, r.h, theme::kBackground);
+	const int current = pattern_.steps[step_].chord;
+	for(int i = 0; i < sequencer::kChordCount; ++i)
+	{
+		const Rect b = button(i);
+		const bool lit = i == current;
+		fill_cell(b, lit ? accent_ : theme::kPanel);
+		const char* name = i == 0 ? "NOTE" : sequencer::kChordNames[i];
+		draw_centered(b, b.y + (b.h - 16) / 2, name,
+		              lit ? display::colors::Black : theme::kText, 2);
+	}
 }
 
 // --- CycleButton --------------------------------------------------------------

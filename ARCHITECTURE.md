@@ -41,7 +41,7 @@ when reality forces a change, update this file.
 | **SAI2** | Block A master + MCLK (PI4–7) *(implemented)*; Block B sync slave (PG10) | Audio out to on-board codec; Block B = line/mic in (future) |
 | **I²C4** | PD12 SCL / PD13 SDA, ~100 kHz *(implemented)* | Shared control bus: WM8994 codec (0x34) + FT5336 touch (0x70) |
 | **ADC1/2/3** | one channel each (PA0, PC3, PF8 …) | Pots / CV inputs (0–3.3 V) |
-| **USB OTG FS** | device (PCD) | Future USB-MIDI input |
+| **USB OTG FS** | host (HCD) on CN13 *(implemented)* | USB-MIDI input (vendored ST USBH + MIDI class) |
 | **SDMMC1 / QUADSPI** | SD card + QSPI flash | Wavetable / preset / sample storage (only 128 KB internal flash) |
 | **USART3** | ST-LINK VCP | Debug logging |
 | **LTDC** | RK043FN48H 480×272, PLL3 pixel clock, double-buffered *(implemented)* | Display |
@@ -157,9 +157,17 @@ every note is a gate.** This collapses all input sources into two primitives:
   the engine. A later mod-matrix routing any source to any destination is, in
   effect, modular patching.
 
-The note interface is therefore a **source-agnostic API on the engine**.
-On-board buttons are its first driver; USB-MIDI / external gates / CV are added
-later as additional sources with no engine changes.
+The note interface is therefore a **source-agnostic API on the engine**:
+`dsp::Engine::note_on(note, velocity, tag)` / `note_off(note, tag)`
+*(implemented)*. The `tag` says who played the note — USB-MIDI (0) or the
+step sequencer (1) — so a note-off only releases voices of its own source
+and the sequencer can never cut off a key held on the keyboard. External
+gates / CV become more tags with no engine changes.
+
+USB-MIDI reaches the engine through a lock-free single-producer /
+single-consumer event FIFO (`midi::Parser::events`): the USB foreground
+pushes every note-on / note-off, the audio interrupt drains it at the top of
+each block. A device unplugged with keys down queues an all-notes-off.
 
 ### The parameter set (`params/`) *(implemented, first draft)*
 
@@ -183,14 +191,28 @@ Play/stop and the playhead cross the boundary through `sequencer::Transport`:
 the UI writes `run`, the interrupt writes `step` (−1 when stopped). One writer
 per field, one aligned word each.
 
-### The modulation matrix (`modulation/matrix.hpp`) *(implemented)*
+### The wave slots (`params/wave_slots`) *(implemented)*
+
+Each oscillator has two **slots**, A and B, each a 32-harmonic spectrum; SHP
+morphs A → B. The UI writes them (WAV puts a basic wave in both, A / B roll
+a random spectrum into one), the audio ISR reads them. A spectrum is 32
+floats, not one word, so each slot is **double-buffered**: the UI writes the
+spare copy and flips the front index with one release store; the interrupt
+reads the front copy. It preempts the UI, never the other way round, so it
+never sees a half-written spectrum. The engine then glides to a changed
+spectrum over ~5 ms, so a swap mid-note doesn't click.
+
+### The modulation matrix (`modulation/matrix.hpp`) *(implemented, live)*
 
 Six rows of `{source, destination, amount}`, the same plain-data model as the
 parameter set: the UI writes, the audio ISR reads. Sources are LFO1, LFO2,
 AmpEnv, Tempo; destinations are Pitch, Shape, Mix, Amp, Cutoff; `amount` is
-−1..1 with 0 = no modulation. It replaces the per-LFO `Dest`/`Amount`
-parameters; per-block the interrupt will fold each active row into the
-destination.
+−1..1 with 0 = no modulation. Each block `app.cpp` copies the rows into the
+engine's `dsp::Patch`, and every voice sums its active rows: LFO1/2 are
+triangles (0.05–20 Hz), Tempo a triangle at one cycle per beat, AmpEnv the
+voice's own envelope (so ENV → CUT is the filter envelope). Full-scale
+amounts: Pitch ±12 semitones, Shape / Mix ±1, Amp ×0..2, Cutoff ±the whole
+20 Hz–20 kHz range.
 
 ### The sequencer clock (`sequencer/sequencer`) *(implemented)*
 
@@ -199,9 +221,18 @@ interrupt. Steps are 16th notes; position is kept as a fraction of a step, so
 tempo changes mid-step keep their progress. A rising `run` starts at step 0 at
 the top of the block; stopping and playing again restarts from step 0. It
 returns the step that began in the block and the frame offset where it began,
-which is where the engine's sample-accurate `note_on` will hook in (at most one
-step per 64-frame block: a step is ≥ 2400 frames even at 300 BPM). No notes are
-fired yet.
+or the frame where the playing step's **gate** closed (half a step in; at most
+one of the two per 64-frame block: a step is ≥ 2400 frames even at 300 BPM).
+
+`sequencer::Player` turns those events into notes *(implemented)*: a step
+plays its note or its **chord** (`sequencer/chords`: 19 shapes on the step's
+root — MAJ, MIN, DIM, AUG, SUS2, SUS4, 6, MIN6, 7, MAJ7, MIN7, MMAJ7, DIM7,
+M7B5, 7SUS4, ADD9, 9, MAJ9, MIN9; up to 5 notes); the gate releases them
+half a step later — unless the next step is **tied**, in which case they ring
+on through it (and through a chain of ties). Stopping releases everything.
+The player remembers what it started, so its note-offs always match even if
+the pattern is edited meanwhile. `app.cpp` renders the block up to the
+event's frame, applies the notes, and renders the rest — sample-accurate.
 
 ---
 
@@ -234,8 +265,8 @@ A `✓` marks what exists today; unmarked entries are planned.
 
 ```
 App/
-  app.cpp                  // ✓ entry: audio callback (silence for now) +
-                           //   foreground loop (touch → UI)
+  app.cpp                  // ✓ entry: audio callback (MIDI + sequencer →
+                           //   engine) + foreground loop (touch → UI)
   display.{hpp,cpp}        // ✓ LTDC bring-up, owns the framebuffer (HAL)
   display_draw.cpp         // ✓ fill / rects / text (pure, host-buildable)
   font8x8.hpp              // ✓ 8x8 bitmap font
@@ -252,20 +283,21 @@ App/
 
   dsp/                     // PURE — no HAL, compiles on desktop
     dsp_config.hpp         // ✓ sample rate, block size, float typedefs
-    oscillator.{hpp,cpp}   //   additive oscillator: 32-harmonic sine-table sum
-                           //   with per-harmonic amplitude (morphable)
-    sine_table.hpp         //   precomputed 2048-point sine lookup (8 KB, shared
-                           //   across all oscillator instances)
-    envelope.{hpp,cpp}     //   ADSR
-    filter.{hpp,cpp}       //   resonant state-variable or ladder filter
-    lfo.{hpp,cpp}          //   modulation source
-    voice.{hpp,cpp}        //   one note: 2× osc + filter + amp env + filter env
-    voice_manager.{hpp,cpp}//   6-voice allocation + stealing (oldest/quietest)
-    engine.{hpp,cpp}       //   note_on/off/gate API; render(block); mix
-    mixer.{hpp,cpp}        //   sum voices, master gain, (later) FX
+    sine_table.{hpp,cpp}   // ✓ 2048-point sine lookup (8 KB RAM, filled at
+                           //   boot), shared by every oscillator
+    spectrum.{hpp,cpp}     // ✓ 32-harmonic spectra: basic waves, random
+                           //   shapes, peak normalising, one-cycle render
+    additive_osc.{hpp,cpp} // ✓ additive oscillator: Fourier sum, morph A→B
+    ladder.{hpp,cpp}       // ✓ nonlinear Moog-style 4-pole ladder, 2× OS
+    envelope.{hpp,cpp}     // ✓ analog-style ADSR + triangle LFO
+    patch.hpp              // ✓ the per-block snapshot of every control
+    voice.{hpp,cpp}        // ✓ one note: 2× osc → mix → ladder → amp env
+    engine.{hpp,cpp}       // ✓ 6 voices, allocation + stealing, tagged
+                           //   note_on/off, LFOs, mod matrix, spectra glide
 
   params/
     parameters.{hpp,cpp}   // ✓ shared UI↔audio parameter set (draft list)
+    wave_slots.{hpp,cpp}   // ✓ per-osc A/B spectra, double-buffered
     smoothing.hpp          //   interpolator / one-pole smoother (de-zipper)
 
   modulation/
@@ -273,8 +305,10 @@ App/
                            //   data: UI writes, audio ISR reads
 
   sequencer/
-    pattern.hpp            // ✓ 16-step pattern data (on + note per step)
-    sequencer.{hpp,cpp}    // ✓ clock + Transport, runs in the audio interrupt
+    pattern.hpp            // ✓ 16-step pattern data (on, note, chord, tie)
+    sequencer.{hpp,cpp}    // ✓ clock + gate + Transport, in the audio ISR
+    chords.{hpp,cpp}       // ✓ 19 chord shapes + names
+    player.{hpp,cpp}       // ✓ steps → note-ons/offs: chords, ties, gates
 
   ui/
     page.hpp               // ✓ Page base + Ctx (model refs), page dimensions
@@ -283,23 +317,29 @@ App/
     widgets.{hpp,cpp}      // ✓ knob, float knob, crossfader, slider, step
                            //   grid, note box, note picker, tab bar, cycle
                            //   button
-    osc_page.{hpp,cpp}     // ✓ OSC: 2× (PIT SHP OCT) + MIX, FIL: CUT/RES
+    osc_page.{hpp,cpp}     // ✓ OSC: 2× (PIT SHP OCT + WAV/A/B) + MIX,
+                           //   FILTER: CUT/RES/DRV, WAVE scope
     env_page.{hpp,cpp}     // ✓ ENV: ATK/DEC/SUS/REL + envelope curve preview
     mod_page.{hpp,cpp}     // ✓ MOD: LFO1/2 rates + 6-row modulation matrix
-    seq_page.{hpp,cpp}     // ✓ SEQ: note box, play/stop, tempo, 4×4 grid
+    seq_page.{hpp,cpp}     // ✓ SEQ: note box, play/stop, chord, tie, tempo,
+                           //   4×4 grid; note + chord pickers
     debug_page.{hpp,cpp}   // ✓ DBG: the old one-screen debug layout (§11)
     theme.hpp              // ✓ colours
 
 test/                      // ✓ host build (native gcc, no MCU) — standalone
   CMakeLists.txt           // ✓ pulls doctest via FetchContent
   test_main.cpp            // ✓ doctest entry point
-  test_oscillator.cpp      // ✓ pitch / level / anti-alias asserts
+  test_dsp.cpp             // ✓ sine table, spectra, oscillator (pitch, morph,
+                           //   band-limit), ladder (slope, resonance, tuning,
+                           //   drive), envelope, engine (allocation, tags)
   test_parameters.cpp      // ✓ clamping, snapping, value formatting
   test_ui.cpp              // ✓ page interactions: tab switch, OSC/ENV/MOD/SEQ,
                            //   ENV curve reflects ADSR + no sustain trails, buffer-convergence
                             //   regressions (page switch, one-shot widget,
                             //   picker grid-gap, playhead)
-  test_sequencer.cpp       // ✓ step timing, start/stop, tempo changes
+  test_sequencer.cpp       // ✓ step timing, start/stop, tempo, gates, chords,
+                           //   player (ties, release on stop)
+  test_midi.cpp            // ✓ parser, note-event FIFO
   wav_writer.hpp           // ✓ 16-bit PCM WAV writer (host-only)
   render_wav.cpp           // ✓ render the DSP to a .wav to audition on a PC
   host_framebuffer.cpp     // ✓ stand-in framebuffer for the host build
@@ -311,32 +351,63 @@ test/                      // ✓ host build (native gcc, no MCU) — standalone
 ## 7. DSP decisions locked in
 
 - **Float**, single precision.
-- **Block size** ~64 samples @ **48 kHz** (revisit if CPU budget demands).
-- **Additive oscillator with sine lookup table** — each oscillator maintains 32
-  independent phase accumulators (one per harmonic). Output is the weighted sum
-  of `sine_table[phase_n]` across all harmonics. This gives:
-  - Natural alias-free output at all pitches: harmonics above Nyquist
-    (SR/2 = 24 kHz) are simply zeroed at note-on time, so the wave
-    band-limits itself automatically. No PolyBLEP, no per-octave table sets.
-  - Continuous waveform morphing: the 32 amplitude coefficients are just
-    floats. Interpolating between two coefficient sets (e.g. sawtooth →
-    square) morphs the timbre smoothly with no discontinuities.
-  - Classic waveform coefficient sets (precomputed, stored as `const float[32]`):
-    - **Sine**: `[1, 0, 0, ...]`
-    - **Sawtooth**: `[1, 1/2, 1/3, 1/4, ...]` (all harmonics, 1/n amplitude)
-    - **Square**: `[1, 0, 1/3, 0, 1/5, ...]` (odd harmonics only, 1/n amplitude)
-    - **Triangle**: `[1, 0, 1/9, 0, 1/25, ...]` (odd harmonics, 1/n² amplitude)
-- **CPU budget** (estimated at 8 cycles/harmonic on M7 with sine table):
-  `8 × 32 harmonics × 2 oscs × 6 voices × 64 samples = 196 608 cycles/block`
-  out of 640 000 available at 480 MHz (~30%). Leaves comfortable headroom for
-  filter, envelopes, LFO, mixing, UI, and controls. *At the current 64 MHz
-  only ~85 000 were available; the clock is now raised (§2).*
-- **Sine lookup table**: 2048 points, single precision float, 8 KB. One global
-  instance shared across all oscillators. Linear interpolation between adjacent
-  entries for sub-sample phase accuracy.
+- **Block size** 64 samples @ **48 kHz** (1.33 ms).
+- **Additive oscillator** *(implemented, `dsp/additive_osc`)* — each sample
+  is the Fourier sum `Σ c[n]·sin(n·θ)` over up to 32 harmonics:
+  - Only sin θ and cos θ come from the 2048-point table (linear
+    interpolation); the harmonics follow from the angle-addition recurrence
+    `sin((n+2)θ) = 2cos(2θ)·sin(nθ) − sin((n−2)θ)`, run as two independent
+    chains (odd / even) so the FPU overlaps them. ~2 FMAs per harmonic
+    instead of 32 table reads; error ≈ −75 dB.
+  - **Band-limited per block**: each harmonic gets a gain that fades it out
+    between 0.41 and 0.45 × the sample rate, and the loop stops at the last
+    audible one, so high notes alias-free *and* cheaper, and a harmonic
+    gliding across Nyquist fades rather than pops.
+  - **Morph**: the oscillator plays `A + shape·(B − A)`. The sum is linear in
+    the coefficients, so it keeps two running sums (A and D = B − A) and
+    `shape` ramps per sample across the block — zipper-free.
+  - **Spectra** (`dsp/spectrum`), all peak-normalised to 1 (so any blend of
+    two also peaks ≤ 1):
+    - **Sine** `[1, 0, 0, …]`, **Saw** `1/n`, **Square** odd `1/n`,
+      **Triangle** odd `±1/n²` (alternating sign — that's what makes it a
+      triangle).
+    - **Random**: fundamental always present; upper harmonics fall off as
+      `1/n^tilt` (random tilt 0.35–1.6), some dropped at random (density
+      0.35–1), sometimes odd-only (hollow), a random resonant bump lifting a
+      band of harmonics, random signs. Repeatable per seed.
+- **Filter** *(implemented, `dsp/ladder`)* — Huovilainen's nonlinear Moog
+  ladder: four tanh-saturating one-pole stages with inverted feedback,
+  2× oversampled (input interpolated, output averaged), half-sample feedback
+  correction, passband compensation (half the input fed back in, so RES
+  doesn't thin the bass), tanh on the output stage (so DRV saturates rather
+  than just getting louder). Measured and corrected: **cutoff tuning** (the
+  resonant peak lands within 0.6 % of the set cutoff from 100 Hz to 20 kHz)
+  and **resonance scaling** per cutoff (self-oscillation starts at ~0.91 on
+  RES at any cutoff). tanh is a 1025-point interpolated table (no divides).
+  Knobs: CUT 20 Hz–20 kHz exponential, RES, DRV (input gain 0.5–8 with
+  makeup gain).
+- **Envelope** — analog-style ADSR (one-pole glides; attack aims at 1.3 and
+  turns at 1). A retrigger starts from the current level. Attack 1 ms–3 s,
+  decay / release 5 ms–8 s.
+- **Voices** — 6, each 2 oscillators → mix → ladder → amp envelope. Morph,
+  mix, cutoff and gain are ramped across each block. Allocation: same note +
+  source retriggers; else a free voice; else steal the quietest releasing
+  voice, else the oldest. A stolen voice keeps its phase / filter / level, so
+  it glides instead of clicking. Output: voices summed at 0.3 each, then a
+  soft clip (the same Padé tanh) to 16 bit.
+- **CPU budget** — *measured on hardware 2026-11-11* (DWT, Debug build with
+  the DSP at `-O2`): idle 2.8 %; worst case — a C2 minor-9 chord held by
+  ties, so 5–6 voices with all 32 harmonics on both oscillators — **59.6 %
+  average, 70.4 % peak**. A PC-sampling profile puts about two thirds of that
+  in the oscillators and a quarter in the ladder. Two optimisations got it
+  there from 74 / 87.5 %: the oscillator folds the morph into one
+  coefficient set when SHP is steady in the block (one Fourier sum, not
+  two), four harmonics per loop step; and the ladder's tanh is a table
+  (no float divides). Further levers if needed: ITCM for the two hot loops,
+  `-O3`, or 1× oversampling.
 - **Parameter smoothing**: per-block linear interpolation of every continuous
   control (§3) to kill zipper noise; one-pole only where a slower glide is
-  wanted.
+  wanted (the spectra).
 - **No allocation / no blocking** anywhere in the audio path.
 
 ---
@@ -350,14 +421,15 @@ Because `dsp/` is HAL-free, a separate **standalone** CMake project under
 cmake -S test -B test/build && cmake --build test/build
 ctest --test-dir test/build --output-on-failure
 ./test/build/render_wav out.wav
-./test/build/render_ui ui    # one screenshot per page: ui_{osc,env,mod,seq,dbg,picker}.ppm
+./test/build/render_ui ui    # one screenshot per page: ui_{osc,env,mod,seq,midi,dbg,picker,chords}.ppm
 ```
 
 - **doctest** (single header, fetched via FetchContent) asserts on oscillator
   frequency, level and aliasing today; envelope timing, filter response and
   voice-stealing as those land.
-- `render_wav` runs the DSP for a few seconds and writes a `.wav`, so changes
-  can be *heard* on a PC before flashing. For a synth, audible regression
+- `render_wav` runs the real engine through a ~25 s tour (basic waves, morphs,
+  a resonant sweep, drive, a sequenced chord progression with a tie) and
+  writes a `.wav`, so changes can be *heard* on a PC before flashing. For a synth, audible regression
   testing is invaluable.
 - `render_ui` drives the UI through a few states and dumps one screenshot per
   page, so layout changes can be looked at without flashing.
@@ -372,12 +444,11 @@ ctest --test-dir test/build --output-on-failure
    test tone streaming via SAI2 + DMA double-buffer. *(Highest-risk; do first.)*
 2. ✅ **`dsp/` scaffold + host build** — `dsp_config`, oscillator skeleton, a
    passing desktop test, and `render_wav`.
-3. **Additive oscillator** — `sine_table`, 32-harmonic phase accumulator,
-   precomputed coefficient sets for saw/square/triangle/sine, morph parameter.
-   Desktop-tested first via `render_wav`.
-4. **One voice** — 2× oscillator → ADSR amp → mixer, hardcoded note on hardware.
-5. **Filter + filter envelope + LFO.**
-6. **6-voice manager + button/touch-driven gates.**
+3. ✅ **Additive oscillator** — `sine_table`, 32-harmonic Fourier sum,
+   basic + random spectra, A→B morph. Desktop-tested via `render_wav`.
+4. ✅ **One voice** — 2× oscillator → ladder → ADSR amp.
+5. ✅ **Filter + LFO** (filter envelope = ENV → CUT in the mod matrix).
+6. ✅ **6-voice engine**, driven by USB-MIDI and the sequencer (chords, ties).
 7. **Controls → parameters** (pots as CV-style controls, smoothed).
 8. **UI** — live parameter display on the panel.
 
@@ -408,12 +479,17 @@ the DSP so there is something to hook the engine to; see §10.)
   (OSC / ENV / MOD / SEQ / DBG; the old one-screen debug page kept as the
   fifth tab, §11), editing `params::Parameters`, `modulation::Matrix` and a
   `sequencer::Pattern`. Not hooked to sound yet: the audio callback streams
-  silence. Host-tested and screenshot-able under `test/`.
-- ⬜ §9.3 onward (additive oscillator, voice, filter, LFO, 6-voice manager,
-  controls).
+  silence at that point. Host-tested and screenshot-able under `test/`.
+- ✅ **Synth engine (§9.3–9.6)** — additive oscillators with A/B morph and
+  random shapes, nonlinear Moog-style ladder, ADSR, two LFOs + the mod
+  matrix, 6 voices with stealing (§7). Polyphonic USB-MIDI in; the sequencer
+  plays notes and chords with ties. Host-tested; `render_wav` renders a
+  tour of it. Running on hardware (CPU measured, §7); not yet auditioned
+  by ear on the board.
+- ⬜ §9.7 controls (pots / CV).
 - ✅ **Sequencer clock + play/stop** — `sequencer/sequencer`, ticked in the
   audio callback; the play button and the grid's playhead go through
-  `sequencer::Transport`. Steps are timed but trigger no notes yet.
+  `sequencer::Transport`. Steps play notes / chords through the Player.
 - ✅ **CPU at 480 MHz + load meter** — `platform/sysclock`, `platform/cpu_load`;
   clock and audio-interrupt load shown in the debug page headers (§2, §3).
 
@@ -481,15 +557,26 @@ few pixels of lit arc are drawn bright as the value pointer.
 
 ### The OSC page
 
-Full-page, on one 76×100 cell grid of **large** knobs (`set_large(true)`:
-a 52 px ring, a knob cap with an anti-aliased pointer, the value at scale 2):
-rows **OSC 1** / **OSC 2**, each with PIT / SHP / OCT; the **MIX** crossfader
-in its own column spanning both rows (top = osc 1, bottom = osc 2); on the
-right, **FILTER** CUT and RES side by side on row 1, in the filter's cyan —
-stored in the parameter set, inert until the filter DSP lands — and under
-them the **WAVE** slot (160×100, `Scope` widget) for the oscilloscope: for
-now an empty graticule with a flat trace, waiting for a sample source from
-the audio side.
+Full-page, on 56×100 cells of **large** knobs (`set_large(true)`: a 52 px
+ring, a knob cap with an anti-aliased pointer, the value at scale 2): rows
+**OSC 1** / **OSC 2**, each with PIT / SHP / OCT and a stack of three
+buttons beside them:
+
+- **WAV** — tap to cycle the basic wave (SIN → TRI → SAW → SQR) and put it
+  in *both* slots, so the oscillator plays exactly that wave. The name dims
+  once a slot has been randomised since.
+- **A** / **B** — tap to roll a new random waveshape into that slot; it stays
+  there until rolled again or WAV resets it. Each button shows its letter
+  and a small picture of the shape it holds (lit in the accent when it's a
+  random one).
+- **SHP** morphs slot A → slot B.
+
+The **MIX** crossfader spans both rows (top = osc 1). On the right,
+**FILTER** CUT / RES / DRV in the filter's cyan, and under them the **WAVE**
+scope: one cycle of each oscillator's current shape (its two slots blended
+at SHP), osc 1 in orange and osc 2 in white, each brighter the more of it the
+MIX lets through. It redraws when a slot, SHP or MIX changes. (It draws the
+shapes from the spectra, not a sample tap of the audio output.)
 
 ### The ENV page
 
@@ -516,8 +603,14 @@ there is no LFO shape parameter or LFO engine to show.)
 
 ### The SEQ page
 
-The note box, play/stop and tempo on a bar, the 4×4 step grid full width
-below.
+The note box, play/stop, **CHORD**, **TIE** and tempo on a bar, the 4×4 step
+grid full width below. CHORD shows the selected step's chord; tap it for the
+**chord picker** (5×4 names over the grid; picking one sets the chord and
+switches the step on). TIE ties the selected step to the one before it — the
+previous note or chord rings on through it — and is lit while it is tied.
+In the grid an on-step shows its note large and its chord name under it; a
+tied step is a bar running through the cell with "TIE" in its corner.
+Tapping a tied step un-ties it; picking a note un-ties it too.
 
 ### The DBG page
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
-// The OSC page: both oscillator rows (pitch / shape / octave) as large
-// knobs, the mix crossfader spanning them; on the right the filter's Cutoff +
-// Resonance (in the filter's accent) over the WAVE oscilloscope slot. The
-// filter parameters are inert until the filter DSP lands; the scope is an
-// empty frame until it gets a sample source.
+// The OSC page: per oscillator row, PIT / SHP / OCT as large knobs and a
+// stack of three buttons - WAV (the basic wave), A and B (roll a random
+// shape into that morph slot; SHP morphs A -> B). The mix crossfader spans
+// both rows. On the right the ladder filter's CUT / RES / DRV (in the
+// filter's accent) over the WAVE scope, which draws both oscillators' current
+// shapes.
 #pragma once
 
 #include "ui/page.hpp"
@@ -25,14 +26,15 @@ public:
 	void update(std::uint32_t now_ms) override;
 
 private:
- static constexpr int kWidgets = 10;
+ static constexpr int kWidgets = 17;  // 6 knobs, 2 WAV, 4 slots, mix, 3 filter, scope
 
  Widget* hit(int x, int y);
 
  Knob knobs_[6];  // Osc1/2 x {Pitch, Shape, Octave}
+ WaveButton wave_[2];
+ SlotButton slot_[4];  // osc 1 A, B, osc 2 A, B
  CrossFader mix_;
- Knob cutoff_;
- Knob resonance_;
+ Knob filter_[3];  // cutoff, resonance, drive
  Scope scope_;
 
  Widget* widgets_[kWidgets];

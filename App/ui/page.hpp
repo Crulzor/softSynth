@@ -9,6 +9,7 @@
 
 #include "modulation/matrix.hpp"
 #include "params/parameters.hpp"
+#include "params/wave_slots.hpp"
 #include "sequencer/pattern.hpp"
 #include "sequencer/sequencer.hpp"
 #include "ui/theme.hpp"
@@ -35,6 +36,7 @@ struct Ctx
 	sequencer::Pattern& pattern;
 	sequencer::Transport& transport;
 	modulation::Matrix& matrix;
+	params::WaveSlots& waves;
 };
 
 class Page

@@ -12,36 +12,47 @@ namespace
 using params::Id;
 
 // --- Layout (kPageW x kPageH) ------------------------------------------------
-// Two rows on one 76 x 100 cell grid, columns under coloured section rules:
-//   OSC 1 / OSC 2  two rows of large knobs (pitch, shape, octave)
+// Two rows of 100 px cells under coloured section rules:
+//   OSC 1 / OSC 2  PIT, SHP, OCT large knobs (56 wide) and a stack of three
+//                  50 x 28 buttons: WAV, A, B
 //   MIX            the crossfader, spanning both rows (top = osc 1)
-//   FILTER         row 1 on the right: cutoff and resonance side by side, in
-//                  the filter's own accent
-//   WAVE           row 2 on the right: the oscilloscope slot (two cells wide)
-constexpr int kCellW = 76;
+//   FILTER         row 1 on the right: CUT, RES, DRV, in the filter's accent
+//   WAVE           row 2 on the right: the scope, as wide as the filter
+constexpr int kKnobW = 56;
 constexpr int kCellH = 100;
-constexpr int kGap = 8;
-constexpr int kColPitch = kCellW + kGap;  // 84
-constexpr int kMarginX = 8;
+constexpr int kGap = 5;
+constexpr int kPitch = kKnobW + kGap;  // 61
+constexpr int kMarginX = 5;
 
 constexpr int kRuleY[2] = {4, 126};  // section rules; cells start 12 below
 constexpr int kRowY[2] = {kRuleY[0] + 12, kRuleY[1] + 12};
 
-constexpr int kOscW = 3 * kCellW + 2 * kGap;  // 244
+constexpr int kBtnX = kMarginX + 3 * kPitch;  // 188
+constexpr int kBtnW = 50;
+constexpr int kBtnH = 28;
+constexpr int kBtnPitch = 36;                  // 3 x 28 + 2 x 8 = 100
+constexpr int kOscW = kBtnX + kBtnW - kMarginX;  // 233, to x = 238
 
 constexpr Rect cell(int col, int row)
 {
-	return Rect{kMarginX + col * kColPitch, kRowY[row], kCellW, kCellH};
+	return Rect{kMarginX + col * kPitch, kRowY[row], kKnobW, kCellH};
 }
 
-constexpr int kMixX = kMarginX + kOscW + kGap;  // 260
-constexpr int kMixW = 44;
+constexpr Rect button(int i, int row)
+{
+	return Rect{kBtnX, kRowY[row] + i * kBtnPitch, kBtnW, kBtnH};
+}
+
+constexpr int kMixX = kBtnX + kBtnW + kGap;  // 243
+constexpr int kMixW = 48;  // room for the value at scale 2 ("127")
 constexpr Rect kMix{kMixX, kRowY[0], kMixW, kRowY[1] + kCellH - kRowY[0]};
 
-constexpr int kRightX = kMixX + kMixW + kGap;  // 312
-constexpr int kRightW = 2 * kCellW + kGap;     // 160, to x = 472
-constexpr Rect kCutoff{kRightX, kRowY[0], kCellW, kCellH};
-constexpr Rect kResonance{kRightX + kColPitch, kRowY[0], kCellW, kCellH};
+constexpr int kRightX = kMixX + kMixW + kGap;  // 296
+constexpr int kRightW = 3 * kKnobW + 2 * kGap;  // 178, to x = 474
+constexpr Rect filter_cell(int i)
+{
+	return Rect{kRightX + i * kPitch, kRowY[0], kKnobW, kCellH};
+}
 constexpr Rect kScope{kRightX, kRowY[1], kRightW, kCellH};
 
 }  // namespace
@@ -55,10 +66,17 @@ OscPage::OscPage(Ctx ctx)
           Knob(cell(1, 1), ctx.params, Id::Osc2Shape),
           Knob(cell(2, 1), ctx.params, Id::Osc2Octave),
       },
+      wave_{WaveButton(button(0, 0), ctx.waves, 0),
+            WaveButton(button(0, 1), ctx.waves, 1)},
+      slot_{SlotButton(button(1, 0), ctx.waves, 0, 0),
+            SlotButton(button(2, 0), ctx.waves, 0, 1),
+            SlotButton(button(1, 1), ctx.waves, 1, 0),
+            SlotButton(button(2, 1), ctx.waves, 1, 1)},
       mix_(kMix, ctx.params, Id::OscMix),
-      cutoff_(kCutoff, ctx.params, Id::FilterCutoff),
-      resonance_(kResonance, ctx.params, Id::FilterResonance),
-      scope_(kScope)
+      filter_{Knob(filter_cell(0), ctx.params, Id::FilterCutoff),
+              Knob(filter_cell(1), ctx.params, Id::FilterResonance),
+              Knob(filter_cell(2), ctx.params, Id::FilterDrive)},
+      scope_(kScope, ctx.waves, ctx.params)
 {
 	int n = 0;
 	for(Knob& k : knobs_)
@@ -67,15 +85,24 @@ OscPage::OscPage(Ctx ctx)
 		k.set_accent(theme::kOscAccent);
 		widgets_[n++] = &k;
 	}
+	for(WaveButton& w : wave_)
+	{
+		w.set_accent(theme::kOscAccent);
+		widgets_[n++] = &w;
+	}
+	for(SlotButton& b : slot_)
+	{
+		b.set_accent(theme::kOscAccent);
+		widgets_[n++] = &b;
+	}
 	mix_.set_large(true);
 	mix_.set_accent(theme::kOscAccent);
 	widgets_[n++] = &mix_;
-	Knob* filter[] = {&cutoff_, &resonance_};
-	for(Knob* k : filter)
+	for(Knob& k : filter_)
 	{
-		k->set_large(true);
-		k->set_accent(theme::kFilAccent);
-		widgets_[n++] = k;
+		k.set_large(true);
+		k.set_accent(theme::kFilAccent);
+		widgets_[n++] = &k;
 	}
 	scope_.set_accent(theme::kOscAccent);
 	widgets_[n++] = &scope_;

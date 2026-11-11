@@ -4,10 +4,12 @@ Softsynth firmware for the **STM32H750B-DK** Discovery board (STM32H750XBH6,
 Cortex-M7 @ up to 480 MHz, 4.3" 480×272 RK043FN48H LCD, WM8994 audio codec).
 
 Milestones so far: paint the LCD, bitmap-font text, audio out of the on-board
-WM8994 codec, a host-tested oscillator (`dsp/`, PolyBLEP for now; an additive
-one is in the works), touch input, and a one-screen dev/debug UI (oscillator and
-modulation knobs, a 4×4 step grid with a running sequencer clock, note picker,
-play/stop, tempo). The firmware follows the
+WM8994 codec, touch input, a six-page touch UI, USB-MIDI host input, and the
+synth itself: a **6-voice** engine with two **additive oscillators** per voice
+(32-harmonic Fourier series; basic waves plus random shapes in two slots, with
+SHP morphing between them), a nonlinear **Moog-style ladder filter**, ADSR,
+two LFOs and a modulation matrix — played polyphonically from USB-MIDI and
+from a 16-step sequencer with **chords** and **ties**. The firmware follows the
 structure of Émilie Gillet's Mutable Instruments modules: the audio interrupt is
 the main loop. See `ARCHITECTURE.md` for the design and roadmap.
 
@@ -21,10 +23,12 @@ the main loop. See `ARCHITECTURE.md` for the design and roadmap.
   and touch), `touch.*` (FT5336 capacitive touch, polled), and the vendored ST
   `wm8994/` driver. I²C4 and SAI2 are configured by the app, not by the generated
   `MX_*_Init()`.
-- `App/dsp/` — **pure, HAL-free DSP** (`dsp_config.hpp`, PolyBLEP `oscillator.*`).
-  Compiles into the firmware *and* on the desktop for unit tests.
-- `App/params/` — the shared parameter set the UI writes and the audio
-  interrupt reads. `App/sequencer/` — the step pattern.
+- `App/dsp/` — **pure, HAL-free DSP**: sine table, spectra, additive
+  oscillator, ladder filter, envelope/LFO, voice, 6-voice engine. Compiles
+  into the firmware *and* on the desktop for unit tests.
+- `App/params/` — the shared parameter set and the oscillators' wave slots,
+  which the UI writes and the audio interrupt reads. `App/sequencer/` — the
+  step pattern, clock, chord shapes and the note player.
 - `App/ui/` — HAL-free widgets and the debug page; also host-built, tested and
   screenshot-able.
 - `test/` — standalone host build (native gcc) for the DSP: doctest unit tests
@@ -53,7 +57,7 @@ renders audio to a `.wav` — no board required:
 cmake -S test -B test/build
 cmake --build test/build
 ctest --test-dir test/build --output-on-failure   # DSP, parameter + UI tests
-./test/build/render_wav out.wav                   # audition the waveforms
+./test/build/render_wav out.wav                   # audition the engine (~25 s tour)
 ./test/build/render_ui ui                         # UI screenshots (.ppm)
 ```
 
@@ -63,14 +67,17 @@ ctest --test-dir test/build --output-on-failure   # DSP, parameter + UI tests
 STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/softSynth.elf -v -rst
 ```
 
-After flashing: the LCD shows the debug page (oscillator + modulation knobs on
-the left, a 4×4 step grid, note picker, play/stop and tempo on the right).
-Everything is editable by touch and play runs the playhead through the grid at
-the set tempo, but nothing is hooked to sound yet; the audio path streams
-silence. The OSC header shows the CPU clock (480MHz) and the MOD header the
-audio-interrupt load (`CPU avg/peak%`). Init failures show in red in the OSC
-header instead of the clock (`NO AUDIO` if the codec
-doesn't answer on I²C, `NO TOUCH` if the FT5336 doesn't).
+After flashing: the LCD opens on the OSC page, with a tab bar along the
+bottom (OSC, ENV, MOD, SEQ, MIDI, DBG) and a status strip showing transport,
+tempo, step pips and the audio-interrupt load (`CPU nn%`). Keys on a USB-MIDI
+keyboard on CN13 play the synth (6 voices); play on the SEQ page runs the
+pattern through it, chords and ties included. Init failures replace the
+status strip in red (`NO AUDIO` if the codec doesn't answer on I²C,
+`NO TOUCH` if the FT5336 doesn't).
+
+Build note: in the Debug preset the DSP sources are compiled `-O2` and the
+HAL-free UI/model sources `-Og` (see `CMakeLists.txt`) — the audio interrupt
+needs the speed, and the 128 KB flash needs the size.
 
 ## Manual changes on top of the raw CubeMX output
 

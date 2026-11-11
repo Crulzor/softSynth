@@ -27,6 +27,7 @@ constexpr Spec kSpecs[kCount] = {
 
     {"CUT", 0.0f, 1.0f, 0.7f, 0.0f, Format::Scale127, nullptr},
     {"RES", 0.0f, 1.0f, 0.1f, 0.0f, Format::Scale127, nullptr},
+    {"DRV", 0.0f, 1.0f, 0.35f, 0.0f, Format::Scale127, nullptr},
 
     {"BPM", 30.0f, 300.0f, 120.0f, 1.0f, Format::Unsigned, nullptr},
 };

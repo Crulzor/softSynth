@@ -4,25 +4,30 @@
 // the clocks and GPIOs are up.
 //
 // Two contexts, Mutable Instruments style (see ARCHITECTURE.md §3):
-//   - The audio interrupt is the synth's real main loop. Once per block it will
-//     read the controls, advance the sequencer clock and render the voices.
+//   - The audio interrupt is the synth's real main loop. Once per block it
+//     reads the controls, advances the sequencer clock and renders the voices.
 //   - The foreground loop below only does what is too slow or blocking for the
 //     interrupt: polling touch over I2C and drawing the UI.
-// They meet in the parameter set and the pattern: the UI writes them, the
-// audio interrupt reads them.
+// They meet in the parameter set, the wave slots, the matrix and the pattern:
+// the UI writes them, the audio interrupt reads them.
 //
-// The audio interrupt renders the throwaway test oscillator from MIDI notes:
-// one voice, latest-wins, sawtooth. The real 6-voice engine lands later —
-// the voice is already shaped as a small struct so that step is "make it an
-// array".
+// The audio interrupt runs the 6-voice engine (dsp::Engine: two additive
+// oscillators -> Moog-style ladder -> envelope per voice). Notes come from
+// two sources, each tagged so their note-offs never cross: USB-MIDI (the
+// parser's event queue) and the step sequencer (clock -> Player, chords and
+// ties). A sequencer step lands sample-accurately: the block is rendered in
+// two parts, split at the step's frame.
 #include <cmath>
 #include <cstdint>
 
 #include "display.hpp"
-#include "dsp/oscillator.hpp"
+#include "dsp/engine.hpp"
+#include "dsp/ladder.hpp"
+#include "dsp/sine_table.hpp"
 #include "midi/midi.hpp"
 #include "modulation/matrix.hpp"
 #include "params/parameters.hpp"
+#include "params/wave_slots.hpp"
 #include "platform/audio_out.hpp"
 #include "platform/codec.hpp"
 #include "platform/cpu_load.hpp"
@@ -30,6 +35,7 @@
 #include "platform/touch.hpp"
 #include "platform/usbhost.hpp"
 #include "sequencer/pattern.hpp"
+#include "sequencer/player.hpp"
 #include "sequencer/sequencer.hpp"
 #include "ui/ui.hpp"
 
@@ -44,86 +50,170 @@ namespace
 constexpr uint32_t kUiFrameMs = 20;   // ~50 Hz touch poll + redraw
 constexpr uint32_t kLoadFrames = 25;  // CPU read-out window: ~0.5 s
 
+// Who played a note (dsp::Engine tags).
+constexpr uint8_t kTagMidi = 0;
+constexpr uint8_t kTagSeq = 1;
+
+static_assert(audio_out::kBlockSize == dsp::kBlockSize,
+              "the engine renders one audio_out block per call");
+static_assert(audio_out::kSampleRate == static_cast<uint32_t>(dsp::kSampleRate),
+              "dsp and audio_out must agree on the sample rate");
+static_assert(static_cast<int>(modulation::Source::Count) ==
+                      static_cast<int>(dsp::ModSrc::Count) &&
+                  static_cast<int>(modulation::Dest::Count) ==
+                      static_cast<int>(dsp::ModDst::Count) &&
+                  modulation::kRows == dsp::kModRoutes,
+              "the matrix maps 1:1 onto the engine's routes");
+
 params::Parameters g_params;
+params::WaveSlots g_waves;
 modulation::Matrix g_matrix;
 sequencer::Pattern g_pattern;
 sequencer::Transport g_transport;
 sequencer::Sequencer g_sequencer(static_cast<float>(audio_out::kSampleRate));
-ui::Ui g_ui(g_params, g_pattern, g_transport, g_matrix);
+ui::Ui g_ui(g_params, g_pattern, g_transport, g_matrix, g_waves);
 
-// One voice: the throwaway oscillator plus what it last played. The MIDI
-// parser's packed note state is the single source of truth; the audio
-// interrupt re-triggers or releases the voice when it changes.
-struct Voice
+// Audio-interrupt state.
+dsp::Engine g_engine;
+sequencer::Player g_player;
+dsp::Patch g_patch;
+
+// Copy the UI-side model into the engine's patch: one consistent snapshot
+// per block. Every field is a word the UI writes atomically.
+void fill_patch(dsp::Patch& p)
 {
-	dsp::Oscillator osc;
-	uint8_t note = 0;
-	float gain = 0.0f;
-	bool active = false;
-};
-
-constexpr float kMaxGain = 0.35f;
-
-Voice g_voice;
-std::atomic<uint32_t> g_latched_note{0};  // last note state the voice consumed
-
-inline float note_to_hz(uint8_t note)
-{
-	return 440.0f * std::pow(2.0f, (note - 69) / 12.0f);
+	using params::Id;
+	const params::Parameters& q = g_params;
+	p.osc_semis[0] = q.get(Id::Osc1Pitch) + 12.0f * q.get(Id::Osc1Octave);
+	p.osc_semis[1] = q.get(Id::Osc2Pitch) + 12.0f * q.get(Id::Osc2Octave);
+	p.shape[0] = q.get(Id::Osc1Shape);
+	p.shape[1] = q.get(Id::Osc2Shape);
+	p.mix = q.get(Id::OscMix);
+	for(int o = 0; o < dsp::kOscs; ++o)
+	{
+		for(int s = 0; s < dsp::kSlots; ++s)
+		{
+			p.spectra[o][s] = g_waves.coeffs(o, s);
+		}
+	}
+	p.attack = q.get(Id::EnvAttack);
+	p.decay = q.get(Id::EnvDecay);
+	p.sustain = q.get(Id::EnvSustain);
+	p.release = q.get(Id::EnvRelease);
+	p.cutoff = q.get(Id::FilterCutoff);
+	p.resonance = q.get(Id::FilterResonance);
+	p.drive = q.get(Id::FilterDrive);
+	p.lfo_rate[0] = q.get(Id::Lfo1Rate);
+	p.lfo_rate[1] = q.get(Id::Lfo2Rate);
+	p.tempo_bpm = q.get(Id::Tempo);
+	for(int i = 0; i < dsp::kModRoutes; ++i)
+	{
+		const modulation::Row& r = g_matrix.rows[i];
+		p.routes[i] = dsp::ModRoute{static_cast<uint8_t>(r.src),
+		                            static_cast<uint8_t>(r.dst), r.amount};
+	}
 }
 
 inline int16_t to_i16(float s)
 {
-	s = (s > 1.0f) ? 1.0f : (s < -1.0f ? -1.0f : s);
-	return static_cast<int16_t>(s * 32767.0f);
+	// Master soft clip: linear for normal levels, rounding off the peaks
+	// when many voices stack up.
+	return static_cast<int16_t>(dsp::fast_tanh(s) * 32767.0f);
 }
 
-// DMA half-buffer callback, ISR context: render `frames` interleaved stereo
-// frames into `out`. The per-block work goes here: sequencer clock, then the
-// voice (a throwaway sawtooth driven by the MIDI note state).
-void audio_callback(int16_t* out, uint32_t frames)
+// One block of at most dsp::kBlockSize frames: MIDI events, then the
+// sequencer clock, then the engine.
+void render_block(int16_t* out, int n)
 {
-	const uint32_t start = cpu_load::begin();
 
-	// When the engine grows, an event whose step is on in g_pattern becomes
-	// note_on(g_pattern.steps[e.step].note) at frame e.offset; until then the
-	// sequencer only keeps the clock and playhead stepping.
-	const sequencer::Sequencer::Event e =
-	    g_sequencer.process(g_transport.run, g_params.get(params::Id::Tempo),
-		                    static_cast<int>(frames));
-	(void)e;
-	g_transport.step = g_sequencer.step();
+	fill_patch(g_patch);
 
-	// MIDI in: retrigger or release the voice when the parser's note state
-	// changes. Block-edge accuracy is plenty for a throwaway voice.
-	const uint32_t ns =
-	    midi::parser().note_state.load(std::memory_order_relaxed);
-	if(ns != g_latched_note.load(std::memory_order_relaxed))
+	// MIDI in: every queued key, at the top of the block.
+	midi::NoteEvent me;
+	while(midi::parser().events.pop(me))
 	{
-		g_latched_note.store(ns, std::memory_order_relaxed);
-		if(midi::Parser::active(ns))
+		switch(me.kind)
 		{
-			g_voice.note = midi::Parser::note(ns);
-			g_voice.gain = static_cast<float>(midi::Parser::velocity(ns)) /
-			               127.0f * kMaxGain;
-			g_voice.osc.set_waveform(dsp::Oscillator::Waveform::Saw);
-			g_voice.osc.set_frequency(note_to_hz(g_voice.note));
-			g_voice.osc.reset();
-			g_voice.active = true;
-		}
-		else
-		{
-			g_voice.active = false;
+			case midi::NoteEvent::On:
+				g_engine.note_on(me.note, me.velocity, kTagMidi);
+				break;
+			case midi::NoteEvent::Off:
+				g_engine.note_off(me.note, kTagMidi);
+				break;
+			default:
+				g_engine.release_all(kTagMidi);
+				break;
 		}
 	}
 
-	for(uint32_t i = 0; i < frames; ++i)
+	// Sequencer: the clock says where a step started or its gate closed;
+	// the player turns that into notes (chords, ties).
+	const bool run = g_transport.run;
+	const sequencer::Sequencer::Event e =
+	    g_sequencer.process(run, g_params.get(params::Id::Tempo), n);
+	g_transport.step = g_sequencer.step();
+	sequencer::NoteEvent ev[sequencer::Player::kMaxEvents];
+	int count = 0;
+	int at = 0;
+	if(!run)
 	{
-		const float s =
-		    g_voice.active ? g_voice.osc.process() * g_voice.gain : 0.0f;
-		const int16_t v = to_i16(s);
+		count = g_player.stop(ev);
+	}
+	else if(e.step >= 0)
+	{
+		count = g_player.on_event(g_pattern, e, ev);
+		at = e.offset;
+	}
+	else if(e.gate_off >= 0)
+	{
+		count = g_player.on_event(g_pattern, e, ev);
+		at = e.gate_off;
+	}
+
+	// Render up to the event's frame, apply it, render the rest.
+	float buf[dsp::kBlockSize];
+	if(count > 0 && at > 0)
+	{
+		g_engine.render(g_patch, buf, at);
+	}
+	else
+	{
+		at = 0;
+	}
+	for(int i = 0; i < count; ++i)
+	{
+		if(ev[i].on)
+		{
+			g_engine.note_on(ev[i].note, ev[i].velocity, kTagSeq);
+		}
+		else
+		{
+			g_engine.note_off(ev[i].note, kTagSeq);
+		}
+	}
+	g_engine.render(g_patch, buf + at, n - at);
+
+	for(int i = 0; i < n; ++i)
+	{
+		const int16_t v = to_i16(buf[i]);
 		out[2 * i] = v;
 		out[2 * i + 1] = v;
+	}
+}
+
+// DMA callback, ISR context: render `frames` interleaved stereo frames into
+// `out`. Normally one half-buffer (kBlockSize frames), but audio_out::start()
+// pre-fills the whole double buffer in one call, so it is cut into blocks.
+void audio_callback(int16_t* out, uint32_t frames)
+{
+	const uint32_t start = cpu_load::begin();
+	while(frames > 0)
+	{
+		const uint32_t n =
+		    frames < audio_out::kBlockSize ? frames : audio_out::kBlockSize;
+		render_block(out, static_cast<int>(n));
+		out += 2 * n;
+		frames -= n;
 	}
 	cpu_load::end(start);
 }
@@ -163,6 +253,8 @@ extern "C" void app_main()
 	// Bring up the audio path: accurate 48 kHz SAI clock, SAI2 + DMA, then the
 	// WM8994 codec over I2C. MCLK must be running (audio_out::init) before the
 	// codec inits, so the order matters.
+	// The oscillators' sine table must be filled before the first block.
+	dsp::sine_table::init();
 	const bool audio_ok =
 	    audio_out::init() && codec::init(audio_out::kSampleRate, 70);
 	const bool touch_ok = touch::init();
@@ -191,6 +283,7 @@ extern "C" void app_main()
 	g_ui.set_status(init_status(clock_ok, audio_ok, touch_ok));
 	g_ui.set_cpu_mhz(static_cast<int>(sysclock::cpu_hz() / 1000000));
 
+	bool was_ready = false;
 	for(uint32_t frame = 1;; ++frame)
 	{
 		if(frame % kLoadFrames == 0)
@@ -199,9 +292,16 @@ extern "C" void app_main()
 			g_ui.set_cpu_load(load.average, load.peak);
 		}
 
-		// USB host: connect, enumeration and the armed bulk-IN.
+		// USB host: connect, enumeration and the armed bulk-IN. A device
+		// that goes away with keys down must not leave them ringing.
 		usbhost::process();
-		g_ui.set_usb_link(usbhost::link());
+		const midi::Link link = usbhost::link();
+		if(was_ready && link.state != midi::LinkState::Ready)
+		{
+			midi::parser().all_notes_off();
+		}
+		was_ready = link.state == midi::LinkState::Ready;
+		g_ui.set_usb_link(link);
 
 		const touch::Point p = touch::read();
 		display::begin_draw();

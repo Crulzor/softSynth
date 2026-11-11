@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: MIT
 //
-// The SEQ page: the 4x4 step grid full width, with the note box, play/stop
-// and tempo on a bar above it.
+// The SEQ page: the 4x4 step grid full width, with the note box, play/stop,
+// the selected step's chord and tie, and tempo on a bar above it.
 //
-//   +-------------------------------+--------------------------------+
-//   | STEP 05 C#4 v | > |  120  ====O====    |                      |
-//   +-------------------------------+--------------------------------+
-//   |  1    |  2    |  3    |  4    |                              |
-//   |  5    |  6    |  7    |  8    |                              |
-//   |  9    | 10    | 11    | 12    |                              |
-//   | 13    | 14    | 15    | 16    |                              |
-//   +----------------------------------------------+
+//   +---------------+---+--------+-----+------------------+
+//   | STEP 05 C#4 v | > | CHORD  | TIE |  120  ====O====  |
+//   |               |   |  MIN7  |     |                  |
+//   +---------------+---+--------+-----+------------------+
+//   |  1    |  2    |  3    |  4    |
+//   |  5    |  6    |  7    |  8    |
+//   |  9    | 10    | 11    | 12    |
+//   | 13    | 14    | 15    | 16    |
+//   +-------------------------------+
 //
-// Nothing here drives sound yet: the page edits a sequencer::Pattern and the
-// sequencer::Transport (play/stop), which the audio interrupt reads. The
-// playhead comes back through the Transport.
+// The page edits a sequencer::Pattern and the sequencer::Transport
+// (play/stop), which the audio interrupt reads; the playhead comes back
+// through the Transport. CHORD opens the chord picker for the selected step,
+// TIE ties it to the step before (the previous note or chord rings on).
 #pragma once
 
 #include <cstdint>
@@ -44,23 +46,29 @@ public:
 	// For tests.
 	const StepGrid& grid() const { return grid_; }
 	const NotePicker& picker() const { return picker_; }
+	const ChordPicker& chord_picker() const { return chord_picker_; }
 
 private:
-	static constexpr int kWidgets = 4;
+	static constexpr int kWidgets = 6;
 
 	Widget* hit(int x, int y);
+	// The modal picker on screen, if any.
+	Widget* modal();
 
 	Slider tempo_;
 	PlayButton play_;
 	StepGrid grid_;
 	NoteBox note_box_;
+	ChordButton chord_;
+	TieButton tie_;
 	NotePicker picker_;
+	ChordPicker chord_picker_;
 
-	// Every widget except the picker, for hit-testing and drawing.
+	// Every widget except the pickers, for hit-testing and drawing.
 	Widget* widgets_[kWidgets];
 
 	Widget* captured_ = nullptr;  // widget that owns the current touch
-	bool picker_drawn_ = false;  // picker was on screen last frame
+	bool picker_drawn_ = false;  // a picker was on screen last frame
 };
 
 }  // namespace ui

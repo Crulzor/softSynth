@@ -10,6 +10,13 @@ Parser& parser()
 	return p;
 }
 
+void Parser::all_notes_off()
+{
+	events.push(NoteEvent{NoteEvent::AllOff, 0, 0, 0});
+	const std::uint32_t s = note_state.load(std::memory_order_relaxed);
+	note_state.store(s & ~(1u << 18), std::memory_order_relaxed);
+}
+
 void Parser::on_packet(const std::uint8_t* buf, int len)
 {
 	if(buf == nullptr)
@@ -67,12 +74,14 @@ void Parser::on_packet(Packet p)
 
 	if(note_on)
 	{
-		// Latest-wins: this note becomes the voice, replacing any prior one.
+		events.push(NoteEvent{NoteEvent::On, d1, d2, ch});
+		// Latest-wins read-out: this note becomes the shown one.
 		note_state.store(pack(d1, d2, ch, true), std::memory_order_relaxed);
 	}
 	else if(note_off)
 	{
-		// Release only the voice we are currently sounding on that channel.
+		events.push(NoteEvent{NoteEvent::Off, d1, 0, ch});
+		// Clear the read-out only if it is showing that note on that channel.
 		const std::uint32_t s = note_state.load(std::memory_order_relaxed);
 		if(active(s) && note(s) == d1 && channel(s) == ch)
 		{
