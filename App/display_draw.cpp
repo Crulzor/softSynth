@@ -160,7 +160,12 @@ void draw_line(int x0, int y0, int x1, int y1, Color c)
 	}
 }
 
-void fill_polygon(const int* xy, int n, Color c)
+namespace
+{
+
+// Scanline fill shared by both fill_polygon() overloads; `top` at the
+// polygon's top row, blending linearly to `bottom` at its bottom row.
+void fill_polygon_impl(const int* xy, int n, Color top, Color bottom)
 {
 	if(n < 3)
 	{
@@ -215,8 +220,31 @@ void fill_polygon(const int* xy, int n, Color c)
 				xmax = xs[i];
 			}
 		}
+		Color c = top;
+		if(ymax > ymin)
+		{
+			const int t = (y - ymin) * 256 / (ymax - ymin);
+			c.r = static_cast<std::uint8_t>(top.r +
+			                                ((bottom.r - top.r) * t) / 256);
+			c.g = static_cast<std::uint8_t>(top.g +
+			                                ((bottom.g - top.g) * t) / 256);
+			c.b = static_cast<std::uint8_t>(top.b +
+			                                ((bottom.b - top.b) * t) / 256);
+		}
 		fill_rect(xmin, y, xmax - xmin + 1, 1, c);
 	}
+}
+
+}  // namespace
+
+void fill_polygon(const int* xy, int n, Color c)
+{
+	fill_polygon_impl(xy, n, c, c);
+}
+
+void fill_polygon(const int* xy, int n, Color top, Color bottom)
+{
+	fill_polygon_impl(xy, n, top, bottom);
 }
 
 int draw_text(int x, int y, const char* s, Color fg, int scale)

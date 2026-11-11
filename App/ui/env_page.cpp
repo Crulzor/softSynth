@@ -89,18 +89,58 @@ void CurvePreview::draw()
 	const int x4 = x0 + w;
 
 	// The region under the envelope: close along the bottom edge, so a single
-	// polygon is the filled shape.
+	// polygon is the filled shape. A vertical gradient, brightest at the top.
+	const display::Color c = theme::kEnvAccent;
 	const int xy[10] = {
 	    x0,  yBot, x1, yTop, x2, susY, x3, susY, x4, yBot};
-	display::fill_polygon(
-	    xy, 5, theme::mix(theme::kBackground, theme::kEnvAccent, 56));
+	display::fill_polygon(xy, 5, theme::mix(theme::kBackground, c, 96),
+	                      theme::mix(theme::kBackground, c, 16));
 
-	// Stroke the envelope on top.
-	const display::Color c = theme::kEnvAccent;
-	display::draw_line(x0, yBot, x1, yTop, c);
-	display::draw_line(x1, yTop, x2, susY, c);
-	display::draw_line(x2, susY, x3, susY, c);
-	display::draw_line(x3, susY, x4, yBot, c);
+	// Stage labels along the bottom, under the middle of each stage, where
+	// the stage is wide enough to hold one.
+	const int stage_x[5] = {x0, x1, x2, x3, x4};
+	static constexpr const char* kStages[4] = {"A", "D", "S", "R"};
+	for(int i = 0; i < 4; ++i)
+	{
+		const int span = stage_x[i + 1] - stage_x[i];
+		if(span >= 14)
+		{
+			display::draw_text(stage_x[i] + span / 2 - 4, yBot - 12, kStages[i],
+			                   theme::kDim);
+		}
+	}
+
+	// Stroke the envelope on top, two pixels wide: each segment again one
+	// pixel further inside the shape (down for the shallow ones, left / right
+	// for the steep attack / release), clamped so nothing lands outside the
+	// clear rect.
+	const auto clampx = [&](int x) { return x < x0 ? x0 : (x > x4 ? x4 : x); };
+	const auto clampy = [&](int y)
+	{ return y < yTop ? yTop : (y > yBot ? yBot : y); };
+	const auto stroke = [&](int xa, int ya, int xb, int yb, int dx, int dy)
+	{
+		display::draw_line(xa, ya, xb, yb, c);
+		display::draw_line(clampx(xa + dx), clampy(ya + dy), clampx(xb + dx),
+		                   clampy(yb + dy), c);
+	};
+	stroke(x0, yBot, x1, yTop, 1, 0);
+	stroke(x1, yTop, x2, susY, 0, 1);
+	stroke(x2, susY, x3, susY, 0, 1);
+	stroke(x3, susY, x4, yBot, -1, 0);
+
+	// Handles on the three breakpoints the knobs move: peak, decay end and
+	// release start.
+	const int hx[3] = {x1, x2, x3};
+	const int hy[3] = {yTop, susY, susY};
+	for(int i = 0; i < 3; ++i)
+	{
+		const int hx0 = clampx(hx[i] - 2);
+		const int hy0 = clampy(hy[i] - 2);
+		const int hx1 = clampx(hx[i] + 2);
+		const int hy1 = clampy(hy[i] + 2);
+		display::fill_rect(hx0, hy0, hx1 - hx0 + 1, hy1 - hy0 + 1,
+		                   theme::kText);
+	}
 
 	display::draw_rect(x0, yTop, r.w, r.h, theme::kHeader);
 }

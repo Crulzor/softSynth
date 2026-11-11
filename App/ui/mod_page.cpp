@@ -13,16 +13,19 @@ namespace
 using params::Id;
 
 // --- Layout (kPageW x kPageH) ------------------------------------------------
-// The matrix as two columns of three 44 px rows: per row, a CycleButton for
-// the source, one for the destination, and a knob for the amount. The two
-// LFO rate knobs ride in the strip below.
+// The matrix as two columns of three 44 px routing rows, each reading
+// "SRC -> DST  amount": a CycleButton for the source, an arrow, one for the
+// destination, and a bipolar amount bar. A row with amount 0 does nothing,
+// so its buttons and arrow are drawn dimmed. The two LFO rate knobs ride in
+// the strip below.
 constexpr int kRowH = 44;
 constexpr int kRowPitch = 48;
 constexpr int kRowY0 = 14;
 
-constexpr int kCellX[3] = {8, 88, 168};
-constexpr int kCellW[3] = {72, 72, 64};
-constexpr int kCol2Off = 246;  // rows 4-6 repeat the column, offset
+constexpr int kCellX[3] = {8, 84, 150};  // src, dst, amount
+constexpr int kCellW[3] = {60, 60, 82};
+constexpr int kCol2Off = 240;  // rows 4-6 repeat the column, offset
+constexpr int kArrowX = 70;    // between src and dst, 12 px wide
 
 constexpr Rect cell(int i, int c)
 {
@@ -43,6 +46,22 @@ void draw_row_tag(int x, int y, const char* text)
 	{
 		ch[0] = text[i];
 		display::draw_text(x, top + i * 9, ch, theme::kDim);
+	}
+}
+
+// The "->" between a row's source and destination, in the accent while the
+// route is live, dim when its amount is zero.
+void draw_arrow(int row, bool live)
+{
+	const Rect src = cell(row, 0);
+	const int x = src.x - kCellX[0] + kArrowX;
+	const int y = src.y + src.h / 2;
+	const display::Color c = live ? theme::kModAccent : theme::kTrack;
+	display::fill_rect(x, y - 4, 12, 9, theme::kBackground);
+	display::fill_rect(x, y, 8, 1, c);
+	for(int i = 0; i < 4; ++i)
+	{
+		display::fill_rect(x + 8 + i, y - 3 + i, 1, 7 - 2 * i, c);
 	}
 }
 
@@ -119,6 +138,13 @@ ModPage::ModPage(Ctx ctx)
 	{
 		w->set_accent(theme::kModAccent);
 	}
+	for(int i = 0; i < modulation::kRows; ++i)
+	{
+		srcs_[i].set_gate(&ctx.matrix.rows[i].amount);
+		dsts_[i].set_gate(&ctx.matrix.rows[i].amount);
+		amts_[i].set_bar(true);
+		amount_[i] = &ctx.matrix.rows[i].amount;
+	}
 }
 
 void ModPage::redraw_all()
@@ -132,6 +158,7 @@ void ModPage::redraw_all()
 	{
 		w->invalidate();
 	}
+	arrows_valid_ = false;
 }
 
 Widget* ModPage::hit(int x, int y)
@@ -186,6 +213,16 @@ void ModPage::update(std::uint32_t now_ms)
 	{
 		w->draw_if_dirty();
 	}
+	for(int i = 0; i < modulation::kRows; ++i)
+	{
+		const bool live = *amount_[i] != 0.0f;
+		if(!arrows_valid_ || live != arrow_live_[i])
+		{
+			arrow_live_[i] = live;
+			draw_arrow(i, live);
+		}
+	}
+	arrows_valid_ = true;
 }
 
 }  // namespace ui

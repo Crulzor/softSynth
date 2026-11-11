@@ -91,6 +91,10 @@ void draw_line(int x0, int y0, int x1, int y1, Color c);
 // triangles), not a general even-odd fill.
 void fill_polygon(const int* xy, int n, Color c);
 
+// The same fill with a vertical gradient: `top` on the polygon's top row,
+// blending linearly to `bottom` on its bottom row (one colour per scanline).
+void fill_polygon(const int* xy, int n, Color top, Color bottom);
+
 // Draw a NUL-terminated string with its top-left corner at (x, y).
 // Each glyph is 8x8 px multiplied by `scale` (scale=1 -> 8x8, scale=3 ->
 // 24x24). Only the glyph (foreground) pixels are written; the background shows

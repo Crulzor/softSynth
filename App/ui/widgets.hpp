@@ -188,7 +188,12 @@ public:
 	void drag(int x, int y, std::uint32_t now_ms) override;
 	void release(std::uint32_t now_ms) override;
 
-protected:
+	// Bar style: the value at scale 2 over a horizontal bar (filled from the
+	// centre for a bipolar range) instead of a ring. Same drag. For the MOD
+	// page's routing rows.
+	void set_bar(bool bar) { bar_ = bar; }
+
+   protected:
 	void draw() override;
 
 private:
@@ -203,6 +208,7 @@ private:
 	const char* label_;
 	float shown_ = 0.0f;
 	bool active_ = false;
+	bool bar_ = false;
 	int x0_ = 0;
 	int y0_ = 0;
 	float n0_ = 0.0f;
@@ -237,8 +243,10 @@ private:
 };
 
 // 4x4 step grid. Tap a step: toggle it and select it. Hold a step: select it
-// without toggling and ask for the note picker. The step the sequencer is
-// playing (Transport::step) is shaded.
+// without toggling and ask for the note picker. An on-step is a cell tinted
+// in the accent with its note name large in the middle; the step the
+// sequencer is playing (Transport::step) gets an accent outline, the selected
+// one a white one; beat numbers (1, 5, 9, 13) are brighter.
 class StepGrid : public Widget
 {
 public:
@@ -473,6 +481,10 @@ public:
 	{
 	}
 
+	// Draw dimmed while *gate == 0 (a matrix row whose amount is zero does
+	// nothing, so its source / destination read as inactive).
+	void set_gate(const float* gate) { gate_ = gate; }
+
 	void sync() override;
 	void press(int x, int y, std::uint32_t now_ms) override;
 	void release(std::uint32_t now_ms) override;
@@ -481,11 +493,15 @@ protected:
 	void draw() override;
 
 private:
-	int* value_;
-	int count_;
-	const char* const* names_;
-	int shown_ = -1;
-	bool pressed_ = false;
+ bool live() const { return gate_ == nullptr || *gate_ != 0.0f; }
+
+ int* value_;
+ int count_;
+ const char* const* names_;
+ const float* gate_ = nullptr;
+ int shown_ = -1;
+ bool shown_live_ = true;
+ bool pressed_ = false;
 };
 
 }  // namespace ui

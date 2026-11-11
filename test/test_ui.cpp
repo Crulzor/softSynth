@@ -23,10 +23,10 @@ int step_x(int i) { return 160 + (i % 4) * 80 + 40; }
 int step_y(int i) { return 35 + (i / 4) * 52 + 26; }
 
 // Row-0 source button cell in framebuffer coords. Mirrors mod_page.cpp:
-// cell(0, 0) = Rect{8, 14, 72, 44}.
+// cell(0, 0) = Rect{8, 14, 60, 44}.
 constexpr int kSrcX = 8;
 constexpr int kSrcY = 14;
-constexpr int kSrcW = 72;
+constexpr int kSrcW = 60;
 constexpr int kSrcH = 44;
 
 // The ENV curve preview rect in framebuffer coords. Mirrors env_page.cpp.
@@ -479,16 +479,16 @@ TEST_CASE("the MOD page edits the matrix and the LFO rates")
 	r.tap(120, 36);  // DST button
 	CHECK(r.matrix.rows[0].dst == 1);
 
-	// The amount knob drags like any other knob.
+	// The amount bar drags like a knob.
 	CHECK(r.matrix.rows[0].amount == 0.0f);
 	r.frame(true, 200, 36);
 	r.frame(true, 200, 16);  // up two steps
 	CHECK(r.matrix.rows[0].amount > 0.0f);
 	r.frame(false);
 
-	// Row 4 is in the second column, first row: its buttons sit +246 px to
+	// Row 4 is in the second column, first row: its buttons sit +240 px to
 	// the right.
-	r.tap(40 + 246, 36);
+	r.tap(40 + 240, 36);
 	CHECK(r.matrix.rows[3].src == 1);
 
 	// The LFO rate knobs edit the parameter set.
@@ -734,4 +734,60 @@ TEST_CASE("the MIDI tab's LED follows the link and flashes on packets")
 	r.frame(false);
 	CHECK(led() == rgb565(ui::theme::kWarn));
 	r.ui.set_usb_link(midi::Link{});
+}
+
+namespace
+{
+std::uint16_t px565(display::Color c)
+{
+	return static_cast<std::uint16_t>(((c.r & 0xF8) << 8) |
+	                                  ((c.g & 0xFC) << 3) | (c.b >> 3));
+}
+
+std::uint16_t pixel_at(int x, int y)
+{
+	return display::detail::g_framebuffer[static_cast<std::uint32_t>(y) *
+	                                      display::kWidth + x];
+}
+}  // namespace
+
+TEST_CASE("a matrix row lights up when its amount leaves zero")
+{
+	Rig r;
+	r.tap(120, 259);  // MOD tab
+	r.frame(false);
+	// Row 0's arrow shaft, between the SRC and DST buttons (mod_page.cpp:
+	// arrow at x = 70 in the column, vertically centred on the 44 px row).
+	const int ax = 8 + 70 + 2;
+	const int ay = 14 + 22;
+	CHECK(pixel_at(ax, ay) == px565(ui::theme::kTrack));
+
+	r.matrix.rows[0].amount = 0.5f;  // from anywhere, not just the bar
+	r.frame(false);
+	CHECK(pixel_at(ax, ay) == px565(ui::theme::kModAccent));
+
+	r.matrix.rows[0].amount = 0.0f;
+	r.frame(false);
+	CHECK(pixel_at(ax, ay) == px565(ui::theme::kTrack));
+}
+
+TEST_CASE("the SEQ playhead is an accent outline on its step")
+{
+	Rig r;
+	r.tap(168, 259);  // SEQ tab
+	r.transport.run = true;
+	r.transport.step = 5;
+	r.frame(false);
+	// SEQ grid: 120 x 52 pitch from (0, 35), cells inset 2 px. Step 5 is
+	// row 1, col 1; its top edge, away from the rounded corners.
+	const int cx = 120 + 2 + 20;
+	const int cy = 35 + 52 + 2;
+	CHECK(pixel_at(cx, cy) == px565(ui::theme::kSeqAccent));
+	CHECK(pixel_at(cx, cy + 1) == px565(ui::theme::kSeqAccent));
+
+	r.transport.step = 6;
+	r.frame(false);
+	CHECK(pixel_at(cx, cy) != px565(ui::theme::kSeqAccent));
+	r.transport.run = false;
+	r.transport.step = -1;
 }

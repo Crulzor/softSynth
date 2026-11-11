@@ -159,10 +159,16 @@ bottom row). Suite 37/37; confirmed on hardware 2026-11-05.
 
 ## Done: UI look pass — OSC re-layout, section accents, status strip (2026-11-11)
 
-Bart picked suggestions 1, 2 and 4 from a list of UI improvements; 3 (a bigger
-1-bit font, ~2–3 KB flash), 5 (MOD as a routing list with bipolar amount
-bars, LFO shape preview) and 6 (ENV gradient/handles, SEQ cells without the
-X) are still on the table.
+Bart picked suggestions 1, 2 and 4 from a list of UI improvements, then 5
+and 6 (MOD routing rows with bipolar amount bars and dimmed idle rows; ENV
+gradient fill, 2 px stroke, handles, stage labels; SEQ cells without the X,
+playhead outline, brighter beat numbers — ARCHITECTURE.md §11). The LFO
+shape preview from 5 was left out on purpose: no LFO shape param or LFO
+engine exists yet, so it would only animate a guess. Still open: 3 (a
+bigger 1-bit font, ~2–3 KB flash). **Flash budget**: 116884 B (89.2 %) in
+the Debug build, which is `-O0`; Release is `-Os` and much smaller, so a
+switch to Release (or `-Og` for Debug) is the first lever if space runs
+out.
 - **OSC page** re-laid out full-page with large knobs (`ParamControl::
   set_large`) — see ARCHITECTURE.md §11. Bart then asked for room for the
   wave shape: cells went 84→76 px wide so CUT/RES sit side by side and the

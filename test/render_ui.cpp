@@ -64,6 +64,10 @@ int main(int argc, char** argv)
 
 	sequencer::Transport transport;
 	modulation::Matrix matrix;
+	// Three live routes, so the MOD page shows live and idle rows.
+	matrix.rows[0] = {0, 0, 0.25f};  // LFO1 -> pitch
+	matrix.rows[1] = {2, 4, 0.6f};   // ENV -> cutoff
+	matrix.rows[3] = {1, 1, -0.4f};  // LFO2 -> shape
 	ui::Ui ui(params, pattern, transport, matrix);
 	ui.redraw_all();
 	ui.set_cpu_mhz(480);

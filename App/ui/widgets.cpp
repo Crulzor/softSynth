@@ -430,6 +430,39 @@ void FloatKnob::draw()
 	shown_ = *value_;
 
 	fill_cell(r, theme::kPanel);
+	if(bar_)
+	{
+		const bool bipolar = min_ < 0.0f;
+		char text[8];
+		put_int(round_to_int(*value_ * static_cast<float>(text_scale_)), text,
+		        bipolar);
+		const bool zero = *value_ == 0.0f;
+		draw_centered(r, r.y + 7, text,
+		              active_ ? accent_ : (zero ? theme::kDim : theme::kText),
+		              2);
+
+		// The bar: track, centre tick, then the lit span from the centre (or
+		// the left end) to the value with a bright tip.
+		const int tx = r.x + 6;
+		const int tw = r.w - 12;
+		const int ty = r.y + r.h - 13;
+		display::fill_rect(tx, ty, tw, 4, theme::kTrack);
+		const int origin = bipolar ? tx + tw / 2 : tx;
+		const int vx =
+		    tx + round_to_int(normalized() * static_cast<float>(tw - 1));
+		if(bipolar)
+		{
+			display::fill_rect(origin, ty - 3, 1, 10, theme::kDim);
+		}
+		if(vx != origin || !bipolar)
+		{
+			const int lo = vx < origin ? vx : origin;
+			const int hi = vx < origin ? origin : vx;
+			display::fill_rect(lo, ty, hi - lo + 1, 4, accent_);
+			display::fill_rect(vx - 1, ty - 2, 3, 8, theme::kText);
+		}
+		return;
+	}
 	draw_ring(r.x + r.w / 2, r.y + 2 + kKnobOuter, kKnobOuter, kKnobInner,
 	          normalized(), min_ < 0.0f, accent_, theme::kPanel);
 
@@ -634,24 +667,41 @@ void StepGrid::draw_cell(int step)
 	shown_on_[step] = s.on;
 	shown_note_[step] = s.note;
 
-	display::fill_rect(c.x, c.y, c.w, c.h,
-	                   step == playhead_ ? theme::kPlayhead : theme::kPanel);
+	const bool playing = step == playhead_;
+	fill_cell(c, s.on ? theme::mix(theme::kPanel, accent_, playing ? 96 : 56)
+	                  : (playing ? theme::kPlayhead : theme::kPanel));
+
+	// Outlines: the playhead in the accent, the selection in white (inset
+	// inside the playhead's when a step is both).
+	if(playing)
+	{
+		display::draw_rect(c.x, c.y, c.w, c.h, accent_);
+		display::draw_rect(c.x + 1, c.y + 1, c.w - 2, c.h - 2, accent_);
+	}
 	if(step == selected_)
 	{
-		display::draw_rect(c.x, c.y, c.w, c.h, theme::kText);
-		display::draw_rect(c.x + 1, c.y + 1, c.w - 2, c.h - 2, theme::kText);
+		const int in = playing ? 2 : 0;
+		display::draw_rect(c.x + in, c.y + in, c.w - 2 * in, c.h - 2 * in,
+		                   theme::kText);
+		if(!playing)
+		{
+			display::draw_rect(c.x + 1, c.y + 1, c.w - 2, c.h - 2,
+			                   theme::kText);
+		}
 	}
 
 	char text[6];
 	put_int(step + 1, text, false);
-	display::draw_text(c.x + 5, c.y + 5, text, theme::kDim);
+	display::draw_text(c.x + 5, c.y + 5, text,
+	                   (step % 4) == 0 ? theme::kText : theme::kDim);
 
 	if(s.on)
 	{
-		draw_centered(c, c.y + (c.h - 24) / 2, "X", accent_, 3);
+		// Note name as large as the cell allows: scale 3 in the SEQ page's
+		// wide cells, scale 2 in the DBG page's narrow ones.
+		const int scale = c.w >= 100 ? 3 : 2;
 		format_note(s.note, text);
-		display::draw_text(c.x + c.w - display::text_width(text) - 5,
-		                   c.y + c.h - 13, text, theme::kText);
+		draw_centered(c, c.y + (c.h - 8 * scale) / 2 + 3, text, accent_, scale);
 	}
 }
 
@@ -1082,7 +1132,7 @@ void Scope::draw()
 
 void CycleButton::sync()
 {
-	if(*value_ != shown_)
+	if(*value_ != shown_ || live() != shown_live_)
 	{
 		invalidate();
 	}
@@ -1105,12 +1155,18 @@ void CycleButton::draw()
 {
 	const Rect& r = rect_;
 	const int v = (shown_ = *value_);
+	const bool on = (shown_live_ = live());
 	const char* name = (v >= 0 && v < count_) ? names_[v] : "???";
-	display::fill_rect(r.x, r.y, r.w, r.h,
-	                   pressed_ ? theme::kHeader : theme::kPanel);
-	display::draw_rect(r.x, r.y, r.w, r.h, pressed_ ? accent_ : theme::kDim);
-	draw_centered(r, r.y + (r.h - 8) / 2, name,
-	              pressed_ ? accent_ : theme::kText);
+	fill_cell(r, pressed_ ? theme::kHeader : theme::kPanel);
+	if(pressed_ || on)
+	{
+		// A thin accent bar along the bottom marks a live route.
+		display::fill_rect(
+		    r.x + 3, r.y + r.h - 4, r.w - 6, 2,
+		    pressed_ ? accent_ : theme::mix(theme::kPanel, accent_, 160));
+	}
+	draw_centered(r, r.y + (r.h - 16) / 2, name,
+	              pressed_ ? accent_ : (on ? theme::kText : theme::kDim), 2);
 }
 
 }  // namespace ui

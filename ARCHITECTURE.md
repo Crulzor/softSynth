@@ -496,15 +496,23 @@ the audio side.
 **ATK / DEC / SUS / REL** knobs across the top, and a read-only preview of the
 resulting envelope below: the attack, decay and release spans share three
 quarters of the width in proportion to their values, and the sustain level
-(a level, not a duration) is the flat top of the remaining quarter. The
+(a level, not a duration) is the flat top of the remaining quarter. Drawn as
+a 2 px green stroke over a vertical gradient fill (`fill_polygon` overload
+with top/bottom colours), white handles on the three breakpoints the knobs
+move, and A / D / S / R labels under stages wide enough to hold one. The
 preview clears its own rect before drawing, like every other widget, so
 dragging a knob never leaves ghost strokes behind.
 
 ### The MOD page
 
-**LFO1 / LFO2** rate knobs, and the 6-row modulation matrix in two columns of
-three rows: per row a source and a destination (tap-to-cycle buttons) and an
-**AMT** knob (−100..+100, step 5; 0 = off).
+The 6-row modulation matrix as **routing rows** in two columns of three, each
+reading `SRC → DST  amount`: tap-to-cycle source and destination buttons, an
+arrow, and a bipolar amount bar (−100..+100, step 5; 0 = off; dragged like a
+knob). A row whose amount is 0 does nothing, so its buttons and arrow are
+drawn dimmed, and it lights up (accent arrow, accent underline on the
+buttons) as soon as the amount leaves zero — from anywhere, via `sync()`.
+**LFO1 / LFO2** rate knobs in the strip below. (No LFO shape preview yet:
+there is no LFO shape parameter or LFO engine to show.)
 
 ### The SEQ page
 
@@ -526,9 +534,11 @@ header shows the audio-interrupt load as `CPU avg/peak%`.
   Nothing jumps on touch-down. Bipolar values fill from 12 o'clock.
 - **Cycle buttons** tap-cycle through their names (the matrix's sources and
   destinations).
-- **Step grid**: tap toggles a step (X) and selects it; hold (~0.45 s) selects
-  without toggling and opens the note picker. The playing step is shaded,
-  read from `Transport::step`.
+- **Step grid**: tap toggles a step and selects it; hold (~0.45 s) selects
+  without toggling and opens the note picker. An on-step is an accent-tinted
+  cell with its note name large in the middle (scale 3 on SEQ, 2 on DBG);
+  the playing step (`Transport::step`) gets a 2 px accent outline, the
+  selected one a white outline; beat numbers 1/5/9/13 are brighter.
 - **Play/stop** button between the note box and tempo: a play triangle when
   stopped, a lit stop square while playing. Writes `Transport::run`.
 - **Note box** shows the selected step and its note; tap it for the picker.

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //
-// The MOD page: the 6-row modulation matrix (a CycleButton for the source,
-// one for the destination, a knob for the amount) in two columns of three
-// rows, with the LFO1 / LFO2 rate knobs in the strip below.
+// The MOD page: the 6-row modulation matrix as routing rows ("SRC -> DST"
+// cycle buttons and a bipolar amount bar; rows with amount 0 dimmed) in two
+// columns of three, with the LFO1 / LFO2 rate knobs in the strip below.
 #pragma once
 
 #include "ui/page.hpp"
@@ -35,6 +35,11 @@ private:
 
 	Widget* widgets_[kWidgets];
 	Widget* captured_ = nullptr;
+
+	// Each row's arrow as last drawn (live = amount != 0).
+	const float* amount_[modulation::kRows] = {};
+	bool arrow_live_[modulation::kRows] = {};
+	bool arrows_valid_ = false;
 };
 
 }  // namespace ui
