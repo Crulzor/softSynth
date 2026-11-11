@@ -30,10 +30,12 @@ add_library(dsp STATIC
     ${APP_DIR}/dsp/engine.cpp
     ${APP_DIR}/dsp/envelope.cpp
     ${APP_DIR}/dsp/ladder.cpp
+    ${APP_DIR}/dsp/lfo.cpp
     ${APP_DIR}/dsp/sine_table.cpp
     ${APP_DIR}/dsp/spectrum.cpp
     ${APP_DIR}/dsp/voice.cpp
     ${APP_DIR}/sequencer/chords.cpp
+    ${APP_DIR}/sequencer/ext_clock.cpp
     ${APP_DIR}/sequencer/player.cpp
     ${APP_DIR}/sequencer/sequencer.cpp
 )
@@ -54,6 +56,7 @@ add_library(ui STATIC
     ${APP_DIR}/ui/mod_page.cpp
     ${APP_DIR}/ui/osc_page.cpp
     ${APP_DIR}/ui/seq_page.cpp
+    ${APP_DIR}/ui/sync_page.cpp
     ${APP_DIR}/ui/ui.cpp
     host_framebuffer.cpp
 )
@@ -78,6 +81,7 @@ enable_testing()
 add_executable(dsp_tests
     test_main.cpp
     test_dsp.cpp
+    test_ext_clock.cpp
     test_midi.cpp
     test_parameters.cpp
     test_sequencer.cpp

@@ -463,10 +463,14 @@ private:
 };
 
 // The OSC page's WAVE display: one cycle of each oscillator's current shape
-// - its two slots blended at the SHP position - over a graticule (quarter
-// divisions, a brighter zero line). Osc 1 in the accent, osc 2 in white,
-// each brighter the more of it the MIX lets through. Redraws whenever a
-// slot, a SHP knob or the MIX changes. Display only, no touch.
+// - its two slots blended at the morph position it is playing - over a
+// graticule (quarter divisions, a brighter zero line). Osc 1 in the accent,
+// osc 2 in white, each brighter the more of it the MIX lets through. The
+// morph position and mix are the ones the audio side reports
+// (WaveSlots::live_*: knob + modulation, so an LFO on SHP or PW animates
+// it - PW drawn as the oscillator makes it, the wave minus a shifted copy), or
+// the knobs where no audio runs. Redraws on any visible change. Display
+// only, no touch.
 class Scope : public Widget
 {
    public:
@@ -482,13 +486,22 @@ class Scope : public Widget
 	void draw() override;
 
    private:
-	void trace(int osc, float shape, display::Color c);
+	// What the scope shows: per oscillator the morph position and PW, and
+	// the mix.
+	struct Shown
+	{
+		float shape[2] = {-1.0f, -1.0f};
+		float pw[2] = {-1.0f, -1.0f};
+		float mix = -1.0f;
+	};
+
+	void trace(int osc, display::Color c);
+	void current(Shown& v) const;
 
 	const params::WaveSlots& waves_;
 	const params::Parameters& params_;
 	std::uint32_t shown_version_[2] = {~0u, ~0u};
-	float shown_shape_[2] = {-1.0f, -1.0f};
-	float shown_mix_ = -1.0f;
+	Shown shown_;
 };
 
 // Tap to pick an oscillator's basic wave (SIN -> TRI -> SAW -> SQR -> ...).
@@ -621,6 +634,56 @@ class ChordPicker : public Widget
 	sequencer::Pattern& pattern_;
 	bool visible_ = false;
 	int step_ = 0;
+};
+
+// A stepped parameter as a small - / + stepper: tap the left third to step
+// down, the right third to step up; the label and value sit in the middle.
+// The OSC page's octave controls.
+class Stepper : public Widget
+{
+   public:
+	Stepper(Rect r, params::Parameters& p, params::Id id)
+	    : Widget(r), params_(p), id_(id)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+	void release(std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	params::Parameters& params_;
+	params::Id id_;
+	float shown_ = -1000.0f;
+	int pressed_ = 0;  // -1 / +1 while a side is held
+};
+
+// An enum parameter (Format::Enum) as a button: tap to step to the next
+// value (wrapping). Shows the label small at the top and the value's name
+// large under it.
+class EnumButton : public Widget
+{
+   public:
+	EnumButton(Rect r, params::Parameters& p, params::Id id)
+	    : Widget(r), params_(p), id_(id)
+	{
+	}
+
+	void sync() override;
+	void press(int x, int y, std::uint32_t now_ms) override;
+	void release(std::uint32_t now_ms) override;
+
+   protected:
+	void draw() override;
+
+   private:
+	params::Parameters& params_;
+	params::Id id_;
+	float shown_ = -1.0f;
+	bool pressed_ = false;
 };
 
 // Tap to cycle an enum value one step (wrapping); shows the current entry's

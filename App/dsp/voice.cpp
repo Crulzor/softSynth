@@ -50,23 +50,15 @@ void Voice::render(const BlockCtl& ctl, Sample* out, Sample* scratch, int n)
 		src[i] = ctl.src[i];
 	}
 	src[static_cast<int>(ModSrc::AmpEnv)] = env_.level();
-	float mod[static_cast<int>(ModDst::Count)] = {};
-	for(const ModRoute& r : p.routes)
-	{
-		if(r.amount != 0.0f && r.src < static_cast<int>(ModSrc::Count) &&
-		   r.dst < static_cast<int>(ModDst::Count))
-		{
-			mod[r.dst] += r.amount * src[r.src];
-		}
-	}
+	float mod[kModDsts];
+	sum_routes(p.routes, src, mod);
 
 	// Oscillators, each into its own half of the scratch buffer.
-	const float pitch_mod = 12.0f * mod[static_cast<int>(ModDst::Pitch)];
 	Sample* buf[kOscs] = {scratch, scratch + n};
 	for(int o = 0; o < kOscs; ++o)
 	{
-		const float semis =
-		    static_cast<float>(note_) + p.osc_semis[o] + pitch_mod;
+		const float semis = static_cast<float>(note_) + p.osc_semis[o] +
+		                    12.0f * osc_mod(mod, ModDst::Pitch, o);
 		const float hz = 440.0f * std::exp2((semis - 69.0f) * (1.0f / 12.0f));
 		const float inc = hz / kSampleRate;
 
@@ -86,10 +78,12 @@ void Voice::render(const BlockCtl& ctl, Sample* out, Sample* scratch, int n)
 			}
 		}
 
-		const float shape = clamp(
-		    p.shape[o] + mod[static_cast<int>(ModDst::Shape)], 0.0f, 1.0f);
+		const float shape =
+		    clamp(p.shape[o] + osc_mod(mod, ModDst::Shape, o), 0.0f, 1.0f);
 		const float shape0 = fresh_ ? shape : shape_[o];
-		osc_[o].render(a, d, harmonics, shape0, shape, inc, buf[o], n);
+		osc_[o].render_pw(a, d, harmonics, shape0, shape,
+		                  p.pw[o] + osc_mod(mod, ModDst::Pw, o), inc, buf[o],
+		                  n);
 		shape_[o] = shape;
 	}
 

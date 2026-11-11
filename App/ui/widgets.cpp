@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "display.hpp"
+#include "dsp/additive_osc.hpp"
 #include "dsp/spectrum.hpp"
 #include "sequencer/chords.hpp"
 #include "ui/theme.hpp"
@@ -1090,14 +1091,36 @@ void TabBar::draw_strip()
 	}
 	x += 13;
 
-	// Tempo.
+	// Tempo: the internal one, or with an external clock the measured one in
+	// the SYNC accent ("--" while no clock arrives).
 	char text[8];
-	format_int(round_to_int(params_.get(params::Id::Tempo)), text);
-	x = display::draw_text(x, ty, text, run ? theme::kText : theme::kDim);
-	x += 8;
+	const bool ext = params_.get(params::Id::ClockSource) > 0.5f;
+	if(ext)
+	{
+		const float bpm = transport_.clock.bpm;
+		if(bpm > 0.0f)
+		{
+			format_int(round_to_int(bpm), text);
+		}
+		else
+		{
+			text[0] = '-';
+			text[1] = '-';
+			text[2] = '\0';
+		}
+		x = display::draw_text(x, ty, text, theme::kSyncAccent);
+	}
+	else
+	{
+		format_int(round_to_int(params_.get(params::Id::Tempo)), text);
+		x = display::draw_text(x, ty, text, run ? theme::kText : theme::kDim);
+	}
+	x += 7;
 
 	// The pattern as 16 pips: beat pips are taller, on-steps lighter, the
-	// playing step in the SEQ accent.
+	// playing step in the SEQ accent. 4 px apart when the strip is wide, 3
+	// when the tabs leave less room.
+	const int pitch = (r.x + r.w - strip_x()) >= 180 ? 4 : 3;
 	const int step = transport_.step;
 	for(int i = 0; i < sequencer::kSteps; ++i)
 	{
@@ -1109,20 +1132,23 @@ void TabBar::draw_strip()
 		{
 			c = seq;
 		}
-		display::fill_rect(x + i * 4, cy - h / 2, 3, h, c);
+		display::fill_rect(x + i * pitch, cy - h / 2, pitch - 1, h, c);
 	}
-	x += sequencer::kSteps * 4 + 6;
+	x += sequencer::kSteps * pitch + 5;
 	display::fill_rect(x, r.y + 6, 1, r.h - 12, theme::kTrack);
 
-	// Audio-interrupt load, right-aligned.
+	// Audio-interrupt load, right-aligned; the "CPU" label only if it fits.
 	char* end = format_int(cpu_pct_, text);
 	end[0] = '%';
 	end[1] = '\0';
 	const int vx = r.x + r.w - 6 - display::text_width(text);
 	display::draw_text(vx, ty, text,
 	                   cpu_pct_ >= 80 ? theme::kWarn : theme::kText);
-	display::draw_text(vx - 4 - display::text_width("CPU"), ty, "CPU",
-	                   theme::kDim);
+	const int lx = vx - 4 - display::text_width("CPU");
+	if(lx >= x + 5)
+	{
+		display::draw_text(lx, ty, "CPU", theme::kDim);
+	}
 }
 
 // --- Scope -------------------------------------------------------------------
@@ -1133,12 +1159,32 @@ namespace
 // Draw one cycle of the spectrum `c` as a connected trace across
 // [x0, x0 + w) around the centre line `mid`, +-`amp` px at full scale.
 void draw_wave(const float* c, int x0, int w, int mid, int amp,
-               display::Color col)
+               display::Color col, float pw = 0.0f)
 {
 	constexpr int kMaxPoints = 200;
+	float raw[kMaxPoints];
 	float pts[kMaxPoints];
 	const int n = w < kMaxPoints ? w : kMaxPoints;
-	dsp::spectrum::render_cycle(c, pts, n);
+	dsp::spectrum::render_cycle(c, raw, n);
+	// PWM, as the oscillator does it: subtract a copy shifted by the width
+	// (linearly interpolated between the cycle's points).
+	float amount;
+	float width;
+	dsp::pw_map(pw, amount, width);
+	for(int i = 0; i < n; ++i)
+	{
+		float v = raw[i];
+		if(amount > 0.0f)
+		{
+			const float at = static_cast<float>(i) + width * static_cast<float>(n);
+			const int j = static_cast<int>(at);
+			const float f = at - static_cast<float>(j);
+			const float a = raw[j % n];
+			const float b = raw[(j + 1) % n];
+			v = (v - amount * (a + f * (b - a))) / (1.0f + amount);
+		}
+		pts[i] = v;
+	}
 	int prev_y = mid;
 	for(int i = 0; i < n; ++i)
 	{
@@ -1166,26 +1212,51 @@ void blend(const params::WaveSlots& w, int osc, float shape, float* out)
 
 }  // namespace
 
+void Scope::current(Shown& v) const
+{
+	if(waves_.live())
+	{
+		// What the oscillators play: knob + modulation (an LFO on SHP / PW).
+		v.shape[0] = waves_.live_shape(0);
+		v.shape[1] = waves_.live_shape(1);
+		v.mix = waves_.live_mix();
+		v.pw[0] = waves_.live_pw(0);
+		v.pw[1] = waves_.live_pw(1);
+		return;
+	}
+	v.shape[0] = params_.get(params::Id::Osc1Shape);
+	v.shape[1] = params_.get(params::Id::Osc2Shape);
+	v.mix = params_.get(params::Id::OscMix);
+	v.pw[0] = params_.get(params::Id::Osc1Pw);
+	v.pw[1] = params_.get(params::Id::Osc2Pw);
+}
+
 void Scope::sync()
 {
-	const float s0 = params_.get(params::Id::Osc1Shape);
-	const float s1 = params_.get(params::Id::Osc2Shape);
-	const float mix = params_.get(params::Id::OscMix);
+	// Redraw on a visible change only (a fifth of a percent of the range):
+	// a modulated shape moves every block.
+	auto moved = [](float a, float b)
+	{ return a - b > 0.002f || b - a > 0.002f; };
+	Shown v;
+	current(v);
 	if(waves_.version(0) != shown_version_[0] ||
-	   waves_.version(1) != shown_version_[1] || s0 != shown_shape_[0] ||
-	   s1 != shown_shape_[1] || mix != shown_mix_)
+	   waves_.version(1) != shown_version_[1] ||
+	   moved(v.shape[0], shown_.shape[0]) ||
+	   moved(v.shape[1], shown_.shape[1]) || moved(v.mix, shown_.mix) ||
+	   moved(v.pw[0], shown_.pw[0]) || moved(v.pw[1], shown_.pw[1]))
 	{
 		invalidate();
 	}
 }
 
-void Scope::trace(int osc, float shape, display::Color c)
+void Scope::trace(int osc, display::Color c)
 {
 	const Rect& r = rect_;
 	float coeffs[dsp::spectrum::kHarmonics];
-	blend(waves_, osc, shape, coeffs);
+	blend(waves_, osc, shown_.shape[osc], coeffs);
 	const int h = r.h - 8;
-	draw_wave(coeffs, r.x + 4, r.w - 8, r.y + 4 + h / 2, h / 2 - 3, c);
+	draw_wave(coeffs, r.x + 4, r.w - 8, r.y + 4 + h / 2, h / 2 - 3, c,
+	          shown_.pw[osc]);
 }
 
 void Scope::draw()
@@ -1193,9 +1264,7 @@ void Scope::draw()
 	const Rect& r = rect_;
 	shown_version_[0] = waves_.version(0);
 	shown_version_[1] = waves_.version(1);
-	shown_shape_[0] = params_.get(params::Id::Osc1Shape);
-	shown_shape_[1] = params_.get(params::Id::Osc2Shape);
-	shown_mix_ = params_.get(params::Id::OscMix);
+	current(shown_);
 	fill_cell(r, theme::kPanel);
 
 	// Graticule: dotted quarter divisions, a solid zero line.
@@ -1225,19 +1294,19 @@ void Scope::draw()
 
 	// The two oscillators, each as bright as the MIX lets it through; the
 	// louder one is drawn last, on top.
-	const int lvl2 = 80 + round_to_int(176.0f * shown_mix_);
-	const int lvl1 = 80 + round_to_int(176.0f * (1.0f - shown_mix_));
+	const int lvl2 = 80 + round_to_int(176.0f * shown_.mix);
+	const int lvl1 = 80 + round_to_int(176.0f * (1.0f - shown_.mix));
 	const display::Color c1 = theme::mix(theme::kPanel, accent_, lvl1);
 	const display::Color c2 = theme::mix(theme::kPanel, theme::kText, lvl2);
-	if(shown_mix_ > 0.5f)
+	if(shown_.mix > 0.5f)
 	{
-		trace(0, shown_shape_[0], c1);
-		trace(1, shown_shape_[1], c2);
+		trace(0, c1);
+		trace(1, c2);
 	}
 	else
 	{
-		trace(1, shown_shape_[1], c2);
-		trace(0, shown_shape_[0], c1);
+		trace(1, c2);
+		trace(0, c1);
 	}
 	display::draw_text(r.x + 6, r.y + 5, "1", c1);
 	display::draw_text(r.x + 16, r.y + 5, "2", c2);
@@ -1447,6 +1516,102 @@ void ChordPicker::draw()
 		draw_centered(b, b.y + (b.h - 16) / 2, name,
 		              lit ? display::colors::Black : theme::kText, 2);
 	}
+}
+
+// --- Stepper ------------------------------------------------------------------
+
+void Stepper::sync()
+{
+	if(params_.get(id_) != shown_)
+	{
+		invalidate();
+	}
+}
+
+void Stepper::press(int x, int, std::uint32_t)
+{
+	const params::Spec& s = params::spec(id_);
+	const float step = s.step > 0.0f ? s.step : 0.01f;
+	if(x < rect_.x + rect_.w / 3)
+	{
+		params_.set(id_, params_.get(id_) - step);
+		pressed_ = -1;
+	}
+	else if(x >= rect_.x + rect_.w - rect_.w / 3)
+	{
+		params_.set(id_, params_.get(id_) + step);
+		pressed_ = 1;
+	}
+	invalidate();
+}
+
+void Stepper::release(std::uint32_t)
+{
+	pressed_ = 0;
+	invalidate();
+}
+
+void Stepper::draw()
+{
+	const Rect& r = rect_;
+	const params::Spec& s = params::spec(id_);
+	shown_ = params_.get(id_);
+	fill_cell(r, theme::kPanel);
+	const int cy = r.y + (r.h - 8) / 2;
+	display::draw_text(r.x + 4, cy, "-", pressed_ < 0 ? accent_ : theme::kText);
+	display::draw_text(r.x + r.w - 12, cy, "+",
+	                   pressed_ > 0 ? accent_ : theme::kText);
+	char text[8];
+	format_value(s, shown_, text);
+	const Rect mid{r.x + 12, r.y, r.w - 24, r.h};
+	if(r.h >= 20)
+	{
+		draw_centered(mid, r.y + 2, s.label, theme::kDim);
+		draw_centered(mid, r.y + r.h - 10, text, accent_);
+	}
+	else
+	{
+		draw_centered(mid, cy, text, accent_);
+	}
+}
+
+// --- EnumButton ---------------------------------------------------------------
+
+void EnumButton::sync()
+{
+	if(params_.get(id_) != shown_)
+	{
+		invalidate();
+	}
+}
+
+void EnumButton::press(int, int, std::uint32_t)
+{
+	const params::Spec& s = params::spec(id_);
+	const float v = params_.get(id_) + 1.0f;
+	params_.set(id_, v > s.max ? s.min : v);
+	pressed_ = true;
+	invalidate();
+}
+
+void EnumButton::release(std::uint32_t)
+{
+	pressed_ = false;
+	invalidate();
+}
+
+void EnumButton::draw()
+{
+	const Rect& r = rect_;
+	const params::Spec& s = params::spec(id_);
+	shown_ = params_.get(id_);
+	fill_cell(r, pressed_ ? theme::kHeader : theme::kPanel);
+	display::draw_text(r.x + 6, r.y + 5, s.label,
+	                   pressed_ ? accent_ : theme::kDim);
+	char text[8];
+	format_value(s, shown_, text);
+	const int scale = display::text_width(text, 3) <= r.w - 8 ? 3 : 2;
+	draw_centered(r, r.y + r.h - 8 * scale - 6, text, accent_, scale);
 }
 
 // --- CycleButton --------------------------------------------------------------

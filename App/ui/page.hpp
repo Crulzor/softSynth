@@ -20,14 +20,16 @@ namespace ui
 inline constexpr int kPageW = 480;
 inline constexpr int kPageH = 246;  // 272 - 26 (tab bar)
 inline constexpr int kTabBarH = 26;
-inline constexpr int kNumPages = 6;
-inline constexpr const char* kPageNames[] = {"OSC", "ENV", "MOD", "SEQ",
-                                             "MIDI", "DBG"};
+inline constexpr int kNumPages = 7;
+inline constexpr const char* kPageNames[] = {"OSC",  "ENV",  "MOD", "SEQ",
+                                             "SYNC", "MIDI", "DBG"};
 // Each page's section accent: its tab fill and the colour of its values.
 inline constexpr display::Color kPageAccents[] = {
-    theme::kOscAccent, theme::kEnvAccent,  theme::kModAccent,
-    theme::kSeqAccent, theme::kMidiAccent, theme::kDbgAccent};
-inline constexpr int kMidiTab = 4;
+    theme::kOscAccent,  theme::kEnvAccent,  theme::kModAccent,
+    theme::kSeqAccent,  theme::kSyncAccent, theme::kMidiAccent,
+    theme::kDbgAccent};
+inline constexpr int kSyncTab = 4;
+inline constexpr int kMidiTab = 5;
 
 // Shared references passed to every page's constructor.
 struct Ctx

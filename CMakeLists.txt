@@ -58,6 +58,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/dsp/engine.cpp
     App/dsp/envelope.cpp
     App/dsp/ladder.cpp
+    App/dsp/lfo.cpp
     App/dsp/sine_table.cpp
     App/dsp/spectrum.cpp
     App/dsp/voice.cpp
@@ -65,8 +66,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/params/parameters.cpp
     App/params/wave_slots.cpp
     App/sequencer/chords.cpp
+    App/sequencer/ext_clock.cpp
     App/sequencer/player.cpp
     App/sequencer/sequencer.cpp
+    App/ui/sync_page.cpp
     App/ui/widgets.cpp
     App/ui/debug_page.cpp
     App/ui/midi_page.cpp
@@ -99,7 +102,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 # The DSP runs in the audio interrupt (12 additive oscillators + 6 ladder
-# filters per block): build it optimised even in Debug, where everything else
+# filters per block, plus the clock-input detector): build it optimised even
+# in Debug, where everything else
 # is -O0. -ffp-contract=fast lets GCC fuse multiply-adds (VFMA), which strict
 # -std=c++17 otherwise turns off.
 set_source_files_properties(
@@ -107,16 +111,28 @@ set_source_files_properties(
     App/dsp/engine.cpp
     App/dsp/envelope.cpp
     App/dsp/ladder.cpp
+    App/dsp/lfo.cpp
     App/dsp/voice.cpp
+    App/sequencer/ext_clock.cpp  # the clock-input edge detector, per sample
     PROPERTIES COMPILE_OPTIONS "-O2;-ffp-contract=fast")
 
-# The HAL-free UI / model code is most of the flash image, and at -O0 it no
-# longer fits the 128 KB with the synth engine in. -Og keeps it debuggable
-# (it is what GCC recommends for debugging) at a fraction of the size.
+# Our own C++ (the HAL-free UI / model code, app.cpp and the platform
+# drivers) is most of the flash image, and at -O0 it no longer fits the
+# 128 KB with the synth engine, clock input and LFOs in. -Os (as Release
+# uses) keeps it small and still steps fine in a debugger; none of it is
+# speed-critical (the per-sample code above is -O2). -Og was 4.5 KB bigger.
 # Release builds use -Os for everything anyway; these options come after the
 # build type's -O0, so they win in Debug only where it matters.
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set_source_files_properties(
+        App/app.cpp
+        App/platform/audio_out.cpp
+        App/platform/codec.cpp
+        App/platform/cpu_load.cpp
+        App/platform/i2c4.cpp
+        App/platform/sysclock.cpp
+        App/platform/touch.cpp
+        App/platform/usbhost.cpp
         App/display_draw.cpp
         App/midi/midi.cpp
         App/params/parameters.cpp
@@ -133,8 +149,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         App/ui/mod_page.cpp
         App/ui/osc_page.cpp
         App/ui/seq_page.cpp
+        App/ui/sync_page.cpp
         App/ui/ui.cpp
-        PROPERTIES COMPILE_OPTIONS "-Og")
+        PROPERTIES COMPILE_OPTIONS "-Os")
 endif()
 
 # Add include paths

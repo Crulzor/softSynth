@@ -38,20 +38,31 @@ enum class Id : std::uint8_t
 	Osc2Shape,
 	Osc2Octave,
 	OscMix,  // 0 = all osc 1, 1 = all osc 2
+	Osc1Pw,  // pulse width: 0 = off, then 50 % narrowing to 5 % (pw_map)
+	Osc2Pw,
 
 	EnvAttack,
 	EnvDecay,
 	EnvSustain,
 	EnvRelease,
 
-	Lfo1Rate,
+	Lfo1Rate,  // FREE rate
 	Lfo2Rate,
+	Lfo1Shape,  // dsp::LfoShape: SIN TRI SAW SQR S&H
+	Lfo2Shape,
+	Lfo1Mode,  // FREE / SYNC
+	Lfo2Mode,
+	Lfo1Div,  // SYNC length, dsp::kLfoDivSteps: 4BAR .. 1/32
+	Lfo2Div,
 
 	FilterCutoff,
 	FilterResonance,
 	FilterDrive,
 
 	Tempo,  // sequencer BPM
+
+	ClockSource,  // INT, EXT+ (clock in), EXT- (clock in, inverted)
+	ClockDiv,     // sequencer::ClockDiv: what one clock pulse is worth
 
 	Count
 };

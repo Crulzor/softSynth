@@ -9,7 +9,9 @@ synth itself: a **6-voice** engine with two **additive oscillators** per voice
 (32-harmonic Fourier series; basic waves plus random shapes in two slots, with
 SHP morphing between them), a nonlinear **Moog-style ladder filter**, ADSR,
 two LFOs and a modulation matrix — played polyphonically from USB-MIDI and
-from a 16-step sequencer with **chords** and **ties**. The firmware follows the
+from a 16-step sequencer with **chords** and **ties**, which can follow a
+**modular clock** on the audio input (left = clock, right = reset; line
+level — attenuate 5–10 V gates first). The firmware follows the
 structure of Émilie Gillet's Mutable Instruments modules: the audio interrupt is
 the main loop. See `ARCHITECTURE.md` for the design and roadmap.
 
@@ -18,8 +20,8 @@ the main loop. See `ARCHITECTURE.md` for the design and roadmap.
 - `App/` — application code (**C++17**). `display.*` brings up the LTDC panel and
   `display_draw.cpp` draws into its framebuffer; `app.cpp` is the entry point
   (`app_main()`), called from the generated `main()`.
-- `App/platform/` — hardware drivers: `audio_out.*` (SAI2 + DMA, accurate 48 kHz
-  PLL2 clock), `codec.*` (WM8994), `i2c4.*` (shared I²C4 bus used by the codec
+- `App/platform/` — hardware drivers: `audio_out.*` (SAI2 + DMA, full duplex:
+  out to the codec, its IN1 input back in; accurate 48 kHz PLL2 clock), `codec.*` (WM8994), `i2c4.*` (shared I²C4 bus used by the codec
   and touch), `touch.*` (FT5336 capacitive touch, polled), and the vendored ST
   `wm8994/` driver. I²C4 and SAI2 are configured by the app, not by the generated
   `MX_*_Init()`.
@@ -71,12 +73,14 @@ After flashing: the LCD opens on the OSC page, with a tab bar along the
 bottom (OSC, ENV, MOD, SEQ, MIDI, DBG) and a status strip showing transport,
 tempo, step pips and the audio-interrupt load (`CPU nn%`). Keys on a USB-MIDI
 keyboard on CN13 play the synth (6 voices); play on the SEQ page runs the
-pattern through it, chords and ties included. Init failures replace the
+pattern through it, chords and ties included; on the SYNC page it can follow
+a clock on the line input instead. Init failures replace the
 status strip in red (`NO AUDIO` if the codec doesn't answer on I²C,
 `NO TOUCH` if the FT5336 doesn't).
 
 Build note: in the Debug preset the DSP sources are compiled `-O2` and the
-HAL-free UI/model sources `-Og` (see `CMakeLists.txt`) — the audio interrupt
+rest of our own C++ (UI, model, app, platform drivers) `-Os` (see
+`CMakeLists.txt`) — the audio interrupt
 needs the speed, and the 128 KB flash needs the size.
 
 ## Manual changes on top of the raw CubeMX output
@@ -102,6 +106,12 @@ CubeMX — re-apply them):
    promotion into the demoted buffer (`detail::flush_box()`, tracked by
    `display_draw.cpp`), so a one-shot widget change lands in both buffers
    and can't ghost while anything else keeps the pair flipping.
+
+4. **`Src/stm32h7xx_hal_msp.c`** is *not* edited, but note: its
+   `HAL_SAI_MspInit()` switches the SAI2 kernel clock to PLL1Q on every
+   `HAL_SAI_Init()`. `audio_out` undoes that after its inits (fixed MCKDIV,
+   mux back to PLL2) — if SAI init code moves, keep that order, or the audio
+   drops to 46.875 kHz (41 cents flat).
 
 The CPU clock is **not** set in `main.c` either: the generated
 `SystemClock_Config()` leaves the core at 64 MHz, and `App/platform/sysclock`

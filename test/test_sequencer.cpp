@@ -280,3 +280,20 @@ TEST_CASE("stopping releases whatever the player holds")
 	CHECK(pl.stop(ev) == 5);
 	CHECK(pl.held() == 0);
 }
+
+TEST_CASE("the song position counts steps since play, with the fraction")
+{
+	Sequencer seq(kSr);
+	CHECK(seq.position() < 0.0f);
+	seq.process(true, 120.0f, kBlock);
+	int frames = kBlock;
+	while(frames < 6000 * 17 + 3000)
+	{
+		seq.process(true, 120.0f, kBlock);
+		frames += kBlock;
+	}
+	// 17.5 steps in, past one full pattern: the count doesn't wrap at 16.
+	CHECK(seq.position() == doctest::Approx(17.5f).epsilon(0.01));
+	seq.process(false, 120.0f, kBlock);
+	CHECK(seq.position() < 0.0f);
+}

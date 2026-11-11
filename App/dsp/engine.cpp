@@ -91,13 +91,35 @@ void Engine::prepare(const Patch& patch, int n, BlockCtl& ctl)
 	ctl.env = Envelope::Coeffs::from(patch.attack, patch.decay, patch.sustain,
 	                                 patch.release);
 
-	// Global modulation sources, advanced by this call's frames.
-	ctl.src[static_cast<int>(ModSrc::Lfo1)] =
-	    lfo_[0].tick(Lfo::rate_hz(patch.lfo_rate[0]), n);
-	ctl.src[static_cast<int>(ModSrc::Lfo2)] =
-	    lfo_[1].tick(Lfo::rate_hz(patch.lfo_rate[1]), n);
+	// Global modulation sources, advanced by this call's frames. A synced
+	// LFO takes its phase from the song position while the pattern plays.
+	const bool playing = patch.seq_pos >= 0.0f;
+	for(int i = 0; i < 2; ++i)
+	{
+		const int sh = patch.lfo_shape[i];
+		const LfoShape shape = sh < static_cast<int>(LfoShape::Count)
+		                           ? static_cast<LfoShape>(sh)
+		                           : LfoShape::Triangle;
+		float v;
+		if(patch.lfo_sync[i])
+		{
+			const int div = patch.lfo_div[i] < kLfoDivCount ? patch.lfo_div[i]
+			                                                : kLfoDivCount - 1;
+			const float steps = kLfoDivSteps[div];
+			v = playing ? lfo_[i].lock(patch.seq_pos, steps, shape)
+			            : lfo_[i].tick(Lfo::synced_hz(steps, patch.tempo_bpm),
+			                           n, shape);
+		}
+		else
+		{
+			v = lfo_[i].tick(Lfo::rate_hz(patch.lfo_rate[i]), n, shape);
+		}
+		ctl.src[static_cast<int>(ModSrc::Lfo1) + i] = v;
+	}
+	// Tempo: a triangle per beat (4 steps), on the beat while playing.
 	ctl.src[static_cast<int>(ModSrc::Tempo)] =
-	    tempo_.tick(patch.tempo_bpm / 60.0f, n);
+	    playing ? tempo_.lock(patch.seq_pos, 4.0f, LfoShape::Triangle)
+		        : tempo_.tick(patch.tempo_bpm / 60.0f, n, LfoShape::Triangle);
 	ctl.src[static_cast<int>(ModSrc::AmpEnv)] = 0.0f;  // per voice
 
 	// Glide each slot's spectrum towards the patch's (~5 ms time constant).
@@ -124,6 +146,37 @@ void Engine::prepare(const Patch& patch, int n, BlockCtl& ctl)
 		ctl.d[o] = d_[o];
 	}
 	spec_ready_ = true;
+
+	// The shape / mix as played, for the scope: the global sources plus the
+	// envelope of the newest sounding voice.
+	{
+		float src[static_cast<int>(ModSrc::Count)];
+		for(int i = 0; i < static_cast<int>(ModSrc::Count); ++i)
+		{
+			src[i] = ctl.src[i];
+		}
+		const Voice* newest = nullptr;
+		for(const Voice& v : voices_)
+		{
+			if(!v.idle() && (newest == nullptr || v.age() > newest->age()))
+			{
+				newest = &v;
+			}
+		}
+		src[static_cast<int>(ModSrc::AmpEnv)] =
+		    newest != nullptr ? newest->level() : 0.0f;
+		float mod[kModDsts];
+		sum_routes(patch.routes, src, mod);
+		auto clamp01 = [](float v)
+		{ return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
+		for(int o = 0; o < kOscs; ++o)
+		{
+			live_shape_[o] =
+			    clamp01(patch.shape[o] + osc_mod(mod, ModDst::Shape, o));
+			live_pw_[o] = clamp01(patch.pw[o] + osc_mod(mod, ModDst::Pw, o));
+		}
+		live_mix_ = clamp01(patch.mix + mod[static_cast<int>(ModDst::Mix)]);
+	}
 
 	// Filter drive: 0.5 .. 8 into the first tanh. The makeup gain undoes the
 	// level a soft input stage costs, so DRV changes the colour, not the

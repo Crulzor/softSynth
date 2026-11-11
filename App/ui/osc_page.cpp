@@ -13,8 +13,8 @@ using params::Id;
 
 // --- Layout (kPageW x kPageH) ------------------------------------------------
 // Two rows of 100 px cells under coloured section rules:
-//   OSC 1 / OSC 2  PIT, SHP, OCT large knobs (56 wide) and a stack of three
-//                  50 x 28 buttons: WAV, A, B
+//   OSC 1 / OSC 2  PIT, SHP, PW large knobs (56 wide) and a stack of four
+//                  50 x 22 cells: WAV, A, B and the OCT stepper
 //   MIX            the crossfader, spanning both rows (top = osc 1)
 //   FILTER         row 1 on the right: CUT, RES, DRV, in the filter's accent
 //   WAVE           row 2 on the right: the scope, as wide as the filter
@@ -29,8 +29,8 @@ constexpr int kRowY[2] = {kRuleY[0] + 12, kRuleY[1] + 12};
 
 constexpr int kBtnX = kMarginX + 3 * kPitch;  // 188
 constexpr int kBtnW = 50;
-constexpr int kBtnH = 28;
-constexpr int kBtnPitch = 36;                  // 3 x 28 + 2 x 8 = 100
+constexpr int kBtnH = 22;
+constexpr int kBtnPitch = 26;                  // 4 x 22 + 3 x 4 = 100
 constexpr int kOscW = kBtnX + kBtnW - kMarginX;  // 233, to x = 238
 
 constexpr Rect cell(int col, int row)
@@ -61,10 +61,10 @@ OscPage::OscPage(Ctx ctx)
     : knobs_{
           Knob(cell(0, 0), ctx.params, Id::Osc1Pitch),
           Knob(cell(1, 0), ctx.params, Id::Osc1Shape),
-          Knob(cell(2, 0), ctx.params, Id::Osc1Octave),
+          Knob(cell(2, 0), ctx.params, Id::Osc1Pw),
           Knob(cell(0, 1), ctx.params, Id::Osc2Pitch),
           Knob(cell(1, 1), ctx.params, Id::Osc2Shape),
-          Knob(cell(2, 1), ctx.params, Id::Osc2Octave),
+          Knob(cell(2, 1), ctx.params, Id::Osc2Pw),
       },
       wave_{WaveButton(button(0, 0), ctx.waves, 0),
             WaveButton(button(0, 1), ctx.waves, 1)},
@@ -72,6 +72,8 @@ OscPage::OscPage(Ctx ctx)
             SlotButton(button(2, 0), ctx.waves, 0, 1),
             SlotButton(button(1, 1), ctx.waves, 1, 0),
             SlotButton(button(2, 1), ctx.waves, 1, 1)},
+      oct_{Stepper(button(3, 0), ctx.params, Id::Osc1Octave),
+           Stepper(button(3, 1), ctx.params, Id::Osc2Octave)},
       mix_(kMix, ctx.params, Id::OscMix),
       filter_{Knob(filter_cell(0), ctx.params, Id::FilterCutoff),
               Knob(filter_cell(1), ctx.params, Id::FilterResonance),
@@ -94,6 +96,11 @@ OscPage::OscPage(Ctx ctx)
 	{
 		b.set_accent(theme::kOscAccent);
 		widgets_[n++] = &b;
+	}
+	for(Stepper& o : oct_)
+	{
+		o.set_accent(theme::kOscAccent);
+		widgets_[n++] = &o;
 	}
 	mix_.set_large(true);
 	mix_.set_accent(theme::kOscAccent);

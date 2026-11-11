@@ -14,15 +14,29 @@
 // Pure: no HAL, host-tested under test/.
 #pragma once
 
+#include <cstdint>
+
 #include "sequencer/pattern.hpp"
 
 namespace sequencer
 {
 
+// The clock input as the audio interrupt sees it, for the SYNC page. The
+// interrupt writes every field (once per block), the UI only reads.
+struct ClockMonitor
+{
+	volatile float level[2] = {0.0f, 0.0f};      // [0] clock (L), [1] reset (R):
+	                                             // peak |x| of the last block
+	volatile float threshold[2] = {0.0f, 0.0f};  // current trigger levels
+	volatile std::uint32_t edges[2] = {0u, 0u};  // edges detected since boot
+	volatile float bpm = 0.0f;  // tempo measured from the clock, 0 = none
+};
+
 struct Transport
 {
 	volatile bool run = false;  // written by the UI: play (true) / stop
 	volatile int step = -1;  // written by the clock: playing step, -1 = stopped
+	ClockMonitor clock;      // written by the audio interrupt
 };
 
 class Sequencer
@@ -55,10 +69,18 @@ public:
 	// Playing step, or -1 when stopped.
 	int step() const { return running_ ? step_ : -1; }
 
+	// Song position: steps since play, with the fraction through the
+	// current one (end of the last processed block); -1 when stopped.
+	float position() const
+	{
+		return running_ ? static_cast<float>(total_) + phase_ : -1.0f;
+	}
+
 private:
 	float sample_rate_;
 	bool running_ = false;
 	int step_ = 0;
+	std::uint32_t total_ = 0;  // steps started since play, minus one
 	float phase_ = 0.0f;  // progress through the current step, 0..1
 };
 

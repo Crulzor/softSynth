@@ -16,6 +16,7 @@ Sequencer::Event Sequencer::process(bool run, float bpm, int frames)
 		// Start: step 0 begins right at the top of this block.
 		running_ = true;
 		step_ = 0;
+		total_ = 0;
 		phase_ =
 		    static_cast<float>(frames) * bpm * 4.0f / (60.0f * sample_rate_);
 		return Event{0, 0, -1};
@@ -46,6 +47,7 @@ Sequencer::Event Sequencer::process(bool run, float bpm, int frames)
 	}
 	phase_ = end - 1.0f;
 	step_ = (step_ + 1) % kSteps;
+	++total_;
 	return Event{step_, offset, -1};
 }
 

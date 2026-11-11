@@ -6,6 +6,15 @@ namespace params
 namespace
 {
 
+constexpr const char* kClockSources[] = {"INT", "EXT+", "EXT-"};
+constexpr const char* kLfoShapes[] = {"SIN", "TRI", "SAW", "SQR", "S&H"};
+constexpr const char* kLfoModes[] = {"FREE", "SYNC"};
+// Same order as dsp::kLfoDivSteps.
+constexpr const char* kLfoDivs[] = {"4BAR", "2BAR", "1BAR", "1/2",
+                                    "1/4.", "1/4",  "1/4T", "1/8.",
+                                    "1/8",  "1/8T", "1/16", "1/32"};
+constexpr const char* kClockDivs[] = {"1/16", "1/8", "1/4", "24PQ", "48PQ"};
+
 // Indexed by Id; keep in the same order as the enum.
 constexpr Spec kSpecs[kCount] = {
     // label  min     max        def    step  format
@@ -16,6 +25,8 @@ constexpr Spec kSpecs[kCount] = {
     {"SHP", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
     {"OCT", -3.0f, 3.0f, 0.0f, 1.0f, Format::Signed, nullptr},
     {"MIX", 0.0f, 1.0f, 0.5f, 0.0f, Format::Scale127, nullptr},
+    {"PW", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
+    {"PW", 0.0f, 1.0f, 0.0f, 0.0f, Format::Scale127, nullptr},
 
     {"ATK", 0.0f, 1.0f, 0.05f, 0.0f, Format::Scale127, nullptr},
     {"DEC", 0.0f, 1.0f, 0.5f, 0.0f, Format::Scale127, nullptr},
@@ -24,12 +35,21 @@ constexpr Spec kSpecs[kCount] = {
 
     {"SPD", 0.0f, 1.0f, 0.3f, 0.0f, Format::Scale127, nullptr},
     {"SPD", 0.0f, 1.0f, 0.3f, 0.0f, Format::Scale127, nullptr},
+    {"SHP", 0.0f, 4.0f, 1.0f, 1.0f, Format::Enum, kLfoShapes},
+    {"SHP", 0.0f, 4.0f, 1.0f, 1.0f, Format::Enum, kLfoShapes},
+    {"MODE", 0.0f, 1.0f, 0.0f, 1.0f, Format::Enum, kLfoModes},
+    {"MODE", 0.0f, 1.0f, 0.0f, 1.0f, Format::Enum, kLfoModes},
+    {"LEN", 0.0f, 11.0f, 5.0f, 1.0f, Format::Enum, kLfoDivs},
+    {"LEN", 0.0f, 11.0f, 5.0f, 1.0f, Format::Enum, kLfoDivs},
 
     {"CUT", 0.0f, 1.0f, 0.7f, 0.0f, Format::Scale127, nullptr},
     {"RES", 0.0f, 1.0f, 0.1f, 0.0f, Format::Scale127, nullptr},
     {"DRV", 0.0f, 1.0f, 0.35f, 0.0f, Format::Scale127, nullptr},
 
     {"BPM", 30.0f, 300.0f, 120.0f, 1.0f, Format::Unsigned, nullptr},
+
+    {"SRC", 0.0f, 2.0f, 0.0f, 1.0f, Format::Enum, kClockSources},
+    {"DIV", 0.0f, 4.0f, 0.0f, 1.0f, Format::Enum, kClockDivs},
 };
 
 }  // namespace

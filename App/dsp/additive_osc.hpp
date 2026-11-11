@@ -53,9 +53,48 @@ class AdditiveOsc
 	void render(const float* a, const float* d, int harmonics, float shape0,
 	            float shape1, float inc, Sample* out, int n);
 
+	// The same with pulse-width modulation at `pw` (the PW knob plus
+	// modulation, 0..1, see pw_map()); pw <= 0 is exactly render(). One
+	// Fourier sum per sample whatever the setting:
+	//  - fade-in (amount < 1, width 50 %): a copy shifted by half a cycle is
+	//    the same harmonics with alternating signs, so PWM there just turns
+	//    the even harmonics down by (1 - m) / (1 + m) - a plain sine sum,
+	//    morph ramp included;
+	//  - full (amount 1): the cosine sum around the midpoint phase
+	//    (pwm_coeffs()), with the morph taken at the block's end value.
+	void render_pw(const float* a, const float* d, int harmonics, float shape0,
+	               float shape1, float pw, float inc, Sample* out, int n);
+
    private:
 	float phase_ = 0.0f;  // turns, [0, 1)
 };
+
+// PWM for any spectrum, the analogue way: subtract a phase-shifted copy.
+//   y(theta) = (w(theta) - m * w(theta + 2 pi W)) / (1 + m)
+// For a saw that is exactly a pulse of width W (W = 0.5: a square); for any
+// other spectrum harmonic n is scaled by |1 - m e^(i 2 pi n W)|, a comb that
+// sweeps through the harmonics as W moves. At m = 1, written around the
+// midpoint phase psi = theta + pi W:
+//   y = -sum w_n sin(pi n W) cos(n psi)
+// still a plain harmonic sum, so band-limited as before. Fills `c` from the
+// (band-limited) spectrum `w` and returns the phase offset (W / 2 turns).
+float pwm_coeffs(const float* w, int harmonics, float width, float* c);
+
+// The PW knob (0..1, plus modulation) as amount and width: 0 = off; the
+// first 10 % fades the effect in at a 50 % width, the rest narrows the
+// width to 5 %.
+inline void pw_map(float pw, float& amount, float& width)
+{
+	pw = pw < 0.0f ? 0.0f : (pw > 1.0f ? 1.0f : pw);
+	if(pw < 0.1f)
+	{
+		amount = pw * 10.0f;
+		width = 0.5f;
+		return;
+	}
+	amount = 1.0f;
+	width = 0.5f - 0.45f * (pw - 0.1f) / 0.9f;
+}
 
 // Band-limiting gain for harmonic number `h` (1-based) at phase increment
 // `inc`: 1 well below Nyquist, fading to 0 just under it, so a harmonic

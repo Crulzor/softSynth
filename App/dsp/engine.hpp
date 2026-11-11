@@ -32,6 +32,7 @@
 
 #include "dsp/dsp_config.hpp"
 #include "dsp/envelope.hpp"
+#include "dsp/lfo.hpp"
 #include "dsp/patch.hpp"
 #include "dsp/voice.hpp"
 
@@ -58,6 +59,14 @@ class Engine
 	int active() const;
 	const Voice& voice(int i) const { return voices_[i]; }
 
+	// What the oscillators actually play as of the last render: each
+	// oscillator's morph position and the mix, knob + modulation, for the
+	// UI's scope. Per-voice sources (ENV) are taken from the most recently
+	// started voice that is still sounding (zero when none is).
+	float live_shape(int osc) const { return live_shape_[osc]; }
+	float live_mix() const { return live_mix_; }
+	float live_pw(int osc) const { return live_pw_[osc]; }
+
    private:
 	void prepare(const Patch& patch, int n, BlockCtl& ctl);
 
@@ -74,6 +83,9 @@ class Engine
 	Lfo lfo_[2];
 	Lfo tempo_;
 	Sample scratch_[2 * kBlockSize];
+	float live_shape_[kOscs] = {0.0f, 0.0f};
+	float live_mix_ = 0.5f;
+	float live_pw_[kOscs] = {0.0f, 0.0f};
 };
 
 }  // namespace dsp

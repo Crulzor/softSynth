@@ -38,7 +38,7 @@ when reality forces a change, update this file.
 
 | Peripheral | Configuration | Role |
 |---|---|---|
-| **SAI2** | Block A master + MCLK (PI4–7) *(implemented)*; Block B sync slave (PG10) | Audio out to on-board codec; Block B = line/mic in (future) |
+| **SAI2** | Block A master + MCLK (PI4–7); Block B sync slave RX (PG10, DMA2_Stream4) *(implemented)* | Audio out to the codec; Block B = the codec's IN1 analogue input = the modular clock input |
 | **I²C4** | PD12 SCL / PD13 SDA, ~100 kHz *(implemented)* | Shared control bus: WM8994 codec (0x34) + FT5336 touch (0x70) |
 | **ADC1/2/3** | one channel each (PA0, PC3, PF8 …) | Pots / CV inputs (0–3.3 V) |
 | **USB OTG FS** | host (HCD) on CN13 *(implemented)* | USB-MIDI input (vendored ST USBH + MIDI class) |
@@ -48,10 +48,27 @@ when reality forces a change, update this file.
 | **FT5336 touch** | I²C4 @ 0x70, INT on PG2 / EXTI2 *(implemented, polled)* | Capacitive touch on the panel |
 
 ### Hardware gotchas
-- **SAI clock accuracy** *(solved)*: the CubeMX default gave `ErrorAudioFreq =
-  -2.32 %` on SAI2 — an audible ~40-cent pitch error. `audio_out` derives the
-  SAI kernel clock from **PLL2** (M=25, N=344, P=7 → 49.142 MHz → MCLK ≈
-  12.288 MHz), ~0.02 % off exact 48 kHz. LTDC keeps PLL3, untouched.
+- **SAI clock accuracy** *(solved, then fixed again 2026-11-11)*: the CubeMX
+  default gave `ErrorAudioFreq = -2.32 %` on SAI2 — an audible ~40-cent pitch
+  error. `audio_out` derives the SAI kernel clock from **PLL2** (M=25, N=344,
+  P=7 → 49.142 MHz, MCKDIV 4 → MCLK 12.2855 MHz = 256 × 47.99 kHz). **But**
+  the CubeMX `HAL_SAI_MspInit()` (Src/stm32h7xx_hal_msp.c) re-selects PLL1Q
+  on every `HAL_SAI_Init()`, and PLL1Q is 48 MHz since the USB change: the
+  board actually ran at **46.876 kHz, 41 cents flat** (measured with a block
+  counter over SWD). `audio_out` now pins MCKDIV and switches the mux back to
+  PLL2 after the SAI inits: measured **47,992.7 Hz (−0.3 cents)**. LTDC keeps
+  PLL3, untouched.
+- **Audio input** *(implemented)*: SAI2 Block B receives the codec's ADC
+  (IN1 as a line input — ST's BSP calls it the analogue mic — no mic bias).
+  Same frame/slots as the output, synchronous to Block A, its own circular
+  DMA with no interrupt: each TX callback reads the capture half the RX DMA
+  is not writing. ST's LINE1 codec setup is for a microphone, so `codec.cpp`
+  then sets the input mixers to 0 dB (not +30), **mutes the output-mixer →
+  input-mixer record path** (ST leaves it at 0 dB, which would feed the
+  synth back into the clock input), turns the ADC DRC off and the ADC volume
+  to 0 dB. The ADC's hi-fi high-pass (~4 Hz) stays: the input is AC-coupled
+  anyway. **Level**: it's a line input — modular 5–10 V gates must be
+  attenuated to about 1 V first.
 - **DMA can't reach DTCM** *(handled)*: the H7 DMA engines cannot access
   DTCMRAM. The SAI DMA buffer lives in `RAM_D2` (`0x30000000`) via the
   `.dma_buffer` linker section. The LTDC framebuffer stays in AXI-SRAM
@@ -206,13 +223,38 @@ spectrum over ~5 ms, so a swap mid-note doesn't click.
 
 Six rows of `{source, destination, amount}`, the same plain-data model as the
 parameter set: the UI writes, the audio ISR reads. Sources are LFO1, LFO2,
-AmpEnv, Tempo; destinations are Pitch, Shape, Mix, Amp, Cutoff; `amount` is
-−1..1 with 0 = no modulation. Each block `app.cpp` copies the rows into the
-engine's `dsp::Patch`, and every voice sums its active rows: LFO1/2 are
-triangles (0.05–20 Hz), Tempo a triangle at one cycle per beat, AmpEnv the
+AmpEnv, Tempo; destinations are PIT / PT1 / PT2, SHP / SH1 / SH2, PW / PW1
+/ PW2 (each oscillator destination for both oscillators, osc 1 only or osc
+2 only — an oscillator gets the sum of its "both" and its own route), MIX,
+AMP, CUT; `amount` is −1..1 with 0 = no modulation. Each block `app.cpp` copies the rows into the
+engine's `dsp::Patch`, and every voice sums its active rows: LFO1/2
+(`dsp/lfo`: SIN / TRI / SAW / SQR / S&H; FREE at 0.05–20 Hz, or SYNC at a
+musical length from 4 bars to 1/32 incl. dotted and triplet values, its
+phase derived from the song position while the pattern plays so it stays
+locked to the bar, free-running at the synced rate when stopped; it follows
+the external clock only while pulses arrive — with nothing plugged in it
+locks to the internal clock, which keeps running as the reference even
+when SRC = EXT), Tempo a
+triangle at one cycle per beat (also locked to the beat while playing), AmpEnv the
 voice's own envelope (so ENV → CUT is the filter envelope). Full-scale
-amounts: Pitch ±12 semitones, Shape / Mix ±1, Amp ×0..2, Cutoff ±the whole
-20 Hz–20 kHz range.
+amounts: Pitch ±12 semitones, Shape / PW / Mix ±1, Amp ×0..2, Cutoff ±the
+whole 20 Hz–20 kHz range.
+
+### The clock input (`sequencer/ext_clock`) *(implemented)*
+
+The sequencer runs from its internal clock (SYNC page SRC = INT) or from a
+modular clock on the audio input (EXT+, or EXT- for an inverted signal):
+**left = clock, right = reset** (a mono cable grounds right: no resets).
+`EdgeDetector` finds rising edges per sample through the AC coupling: a
+threshold at 40 % of a slow peak follower (never below 2 % of full scale),
+hysteresis (re-arm below half of it) and a 4 ms hold-off. `ExtClock` turns
+edges into the same `Sequencer::Event` the internal clock makes: DIV 1/16,
+1/8, 1/4 (in-between steps spread over the measured pulse interval, every
+pulse resyncs to the grid) or 24 / 48 PPQN (every 6th / 12th pulse); gates
+at half the measured step; reset → the next pulse is step 0; play → armed
+until the next pulse. The tempo is measured from the pulses (and drives the
+Tempo mod source); two seconds without a pulse is "no clock". Cost: ~0.5 %
+of the CPU.
 
 ### The sequencer clock (`sequencer/sequencer`) *(implemented)*
 
@@ -289,7 +331,9 @@ App/
                            //   shapes, peak normalising, one-cycle render
     additive_osc.{hpp,cpp} // ✓ additive oscillator: Fourier sum, morph A→B
     ladder.{hpp,cpp}       // ✓ nonlinear Moog-style 4-pole ladder, 2× OS
-    envelope.{hpp,cpp}     // ✓ analog-style ADSR + triangle LFO
+    envelope.{hpp,cpp}     // ✓ analog-style ADSR
+    lfo.{hpp,cpp}          // ✓ LFO: 5 shapes, FREE (Hz) or SYNC (locked
+                           //   to the song position)
     patch.hpp              // ✓ the per-block snapshot of every control
     voice.{hpp,cpp}        // ✓ one note: 2× osc → mix → ladder → amp env
     engine.{hpp,cpp}       // ✓ 6 voices, allocation + stealing, tagged
@@ -309,6 +353,7 @@ App/
     sequencer.{hpp,cpp}    // ✓ clock + gate + Transport, in the audio ISR
     chords.{hpp,cpp}       // ✓ 19 chord shapes + names
     player.{hpp,cpp}       // ✓ steps → note-ons/offs: chords, ties, gates
+    ext_clock.{hpp,cpp}    // ✓ clock input: edge detector + external clock
 
   ui/
     page.hpp               // ✓ Page base + Ctx (model refs), page dimensions
@@ -323,6 +368,8 @@ App/
     mod_page.{hpp,cpp}     // ✓ MOD: LFO1/2 rates + 6-row modulation matrix
     seq_page.{hpp,cpp}     // ✓ SEQ: note box, play/stop, chord, tie, tempo,
                            //   4×4 grid; note + chord pickers
+    sync_page.{hpp,cpp}    // ✓ SYNC: clock source / division, tempo, input
+                           //   level meters with threshold + edge lights
     debug_page.{hpp,cpp}   // ✓ DBG: the old one-screen debug layout (§11)
     theme.hpp              // ✓ colours
 
@@ -340,6 +387,9 @@ test/                      // ✓ host build (native gcc, no MCU) — standalone
   test_sequencer.cpp       // ✓ step timing, start/stop, tempo, gates, chords,
                            //   player (ties, release on stop)
   test_midi.cpp            // ✓ parser, note-event FIFO
+  test_ext_clock.cpp       // ✓ edge detector on AC-coupled / noisy / weak /
+                           //   clipped / inverted pulses; divisions, reset,
+                           //   arming, tempo, timeout
   wav_writer.hpp           // ✓ 16-bit PCM WAV writer (host-only)
   render_wav.cpp           // ✓ render the DSP to a .wav to audition on a PC
   host_framebuffer.cpp     // ✓ stand-in framebuffer for the host build
@@ -375,6 +425,18 @@ test/                      // ✓ host build (native gcc, no MCU) — standalone
       `1/n^tilt` (random tilt 0.35–1.6), some dropped at random (density
       0.35–1), sometimes odd-only (hollow), a random resonant bump lifting a
       band of harmonics, random signs. Repeatable per seed.
+- **PWM for any shape** *(implemented, `AdditiveOsc::render_pw`)* — the
+  analogue way, subtracting a phase-shifted copy: y = (w(θ) − m·w(θ + 2πW))
+  / (1 + m). On a saw that is exactly a pulse of width W; on any other
+  spectrum harmonic n is scaled by |1 − m·e^(i2πnW)|, a comb sweeping through
+  the harmonics (a sine only changes level). Still one Fourier sum per
+  sample: in the PW knob's fade-in range (amount m < 1, W = 50 %) a
+  half-cycle shift is just alternating signs, so it is "even harmonics ×
+  (1 − m)/(1 + m)" through the normal path; at full PWM the sum is taken
+  as cosines around the midpoint phase θ + πW. Knob: 0 = off, first 10 %
+  fades in at 50 %, then the width narrows to 5 %. Measured worst case
+  (6 voices, all harmonics, PW on both oscillators): ~57–60 %, the same as
+  without.
 - **Filter** *(implemented, `dsp/ladder`)* — Huovilainen's nonlinear Moog
   ladder: four tanh-saturating one-pole stages with inverted feedback,
   2× oversampled (input interpolated, output averaged), half-sample feedback
@@ -530,16 +592,18 @@ until release.
 ### The pages and the tab bar
 
 The screen is 480×246 for the active page plus a 26 px tab bar along the
-bottom. Six tabs — **OSC, ENV, MOD, SEQ, MIDI, DBG** — 48 px each, the active
+bottom. Seven tabs — **OSC, ENV, MOD, SEQ, SYNC, MIDI, DBG** — 48 px each, the active
 one filled with its page's accent; a press on the bar's tab zone switches
 page. The **MIDI** tab carries a small LED in its corner: off with nothing on
 CN13, amber while enumerating, green when the MIDI class is running (flashing
 white for 60 ms on each packet), red for a device without a MIDI interface.
 
 Right of the tabs is a **status strip**, visible on every page: a play
-triangle (SEQ accent) or stop square, the tempo, a 16-pip step row (beat pips
-taller, on-steps lighter, the playing step in the SEQ accent) and the
-audio-interrupt load as `CPU nn%` (red from 80 %). A status message
+triangle (SEQ accent) or stop square, the tempo (with an external clock: the
+measured tempo in the SYNC accent, `--` with no clock), a 16-pip step row
+(beat pips taller, on-steps lighter, the playing step in the SEQ accent;
+3 px apart now that seven tabs leave 144 px) and the audio-interrupt load as
+`nn%` (red from 80 %; the `CPU` label only where it fits). A status message
 (`Ui::set_status`, e.g. an init failure) replaces the strip, in red, while
 set. The bar redraws every frame (it is invalidated each frame anyway).
 
@@ -559,8 +623,8 @@ few pixels of lit arc are drawn bright as the value pointer.
 
 Full-page, on 56×100 cells of **large** knobs (`set_large(true)`: a 52 px
 ring, a knob cap with an anti-aliased pointer, the value at scale 2): rows
-**OSC 1** / **OSC 2**, each with PIT / SHP / OCT and a stack of three
-buttons beside them:
+**OSC 1** / **OSC 2**, each with PIT / SHP / **PW** (pulse width, 0 = off)
+and a stack of four 50×22 cells beside them:
 
 - **WAV** — tap to cycle the basic wave (SIN → TRI → SAW → SQR) and put it
   in *both* slots, so the oscillator plays exactly that wave. The name dims
@@ -569,12 +633,15 @@ buttons beside them:
   there until rolled again or WAV resets it. Each button shows its letter
   and a small picture of the shape it holds (lit in the accent when it's a
   random one).
-- **SHP** morphs slot A → slot B.
+- **OCT** — a − / + stepper (`Stepper`): tap the left third to go down an
+  octave, the right third to go up.
+- **SHP** morphs slot A → slot B; **PW** pulse-width modulates whatever
+  shape that gives.
 
 The **MIX** crossfader spans both rows (top = osc 1). On the right,
 **FILTER** CUT / RES / DRV in the filter's cyan, and under them the **WAVE**
 scope: one cycle of each oscillator's current shape (its two slots blended
-at SHP), osc 1 in orange and osc 2 in white, each brighter the more of it the
+at SHP, with its PW applied), osc 1 in orange and osc 2 in white, each brighter the more of it the
 MIX lets through. It redraws when a slot, SHP or MIX changes. (It draws the
 shapes from the spectra, not a sample tap of the audio output.)
 
@@ -598,8 +665,11 @@ arrow, and a bipolar amount bar (−100..+100, step 5; 0 = off; dragged like a
 knob). A row whose amount is 0 does nothing, so its buttons and arrow are
 drawn dimmed, and it lights up (accent arrow, accent underline on the
 buttons) as soon as the amount leaves zero — from anywhere, via `sync()`.
-**LFO1 / LFO2** rate knobs in the strip below. (No LFO shape preview yet:
-there is no LFO shape parameter or LFO engine to show.)
+The **LFO** strip below has, per LFO: a rate knob — SPD (Hz) in FREE, LEN
+(4BAR … 1/32, `.` dotted, `T` triplet) in SYNC; the page draws and
+hit-tests only the one the mode selects, in the same cell — a shape button
+(tap: SIN → TRI → SAW → SQR → S&H, drawn as a small wave) and a MODE
+button (FREE / SYNC).
 
 ### The SEQ page
 
@@ -611,6 +681,16 @@ previous note or chord rings on through it — and is lit while it is tied.
 In the grid an on-step shows its note large and its chord name under it; a
 tied step is a bar running through the cell with "TIE" in its corner.
 Tapping a tied step un-ties it; picking a note un-ties it too.
+
+### The SYNC page
+
+**CLOCK**: SRC (INT / EXT+ / EXT-) and DIV (1/16, 1/8, 1/4, 24PQ, 48PQ) as
+tap-to-cycle buttons (`EnumButton`), and the tempo — internal, measured, or
+NO CLOCK — with a light blinking on clock edges while the clock input is in
+charge. **INPUT**: a meter per channel (L clock, R reset): the level, the
+detector's current threshold as a white tick, an edge light and the edge
+count, so a patch can be checked before pressing play. Two lines remind
+where to patch and that the input is line level. Accent: sky blue.
 
 ### The DBG page
 

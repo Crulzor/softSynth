@@ -62,6 +62,24 @@ class WaveSlots
 	// Bumped on every change to `osc`'s slots: the UI redraws on a change.
 	std::uint32_t version(int osc) const { return version_[osc]; }
 
+	// The morph position / mix / PW the oscillators actually play (knob +
+	// modulation), written by the audio interrupt every block for the
+	// scope; live() stays false until the first write (host builds: the UI
+	// falls back to the knobs).
+	void set_live(float shape0, float shape1, float mix, float pw0, float pw1)
+	{
+		live_shape_[0] = shape0;
+		live_shape_[1] = shape1;
+		live_mix_ = mix;
+		live_pw_[0] = pw0;
+		live_pw_[1] = pw1;
+		live_ = true;
+	}
+	bool live() const { return live_; }
+	float live_shape(int osc) const { return live_shape_[osc]; }
+	float live_mix() const { return live_mix_; }
+	float live_pw(int osc) const { return live_pw_[osc]; }
+
 	// Audio side (and the UI's drawing) ----------------------------------
 
 	// The current spectrum of a slot: kHarmonics floats.
@@ -86,6 +104,10 @@ class WaveSlots
 	dsp::spectrum::Basic basic_[kOscs];
 	std::uint32_t version_[kOscs] = {};
 	std::uint32_t rng_ = 0x2545F491u;
+	volatile float live_shape_[kOscs] = {0.0f, 0.0f};
+	volatile float live_mix_ = 0.5f;
+	volatile float live_pw_[kOscs] = {0.0f, 0.0f};
+	volatile bool live_ = false;
 };
 
 }  // namespace params

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// UI entry point for the foreground loop. Owns the six pages and the tab
+// UI entry point for the foreground loop. Owns the seven pages and the tab
 // bar at the bottom of the screen: a press on the bar switches the current
 // page, everything else is routed to that page. Turns polled touch samples
 // into press / drag / release.
@@ -23,6 +23,7 @@
 #include "ui/osc_page.hpp"
 #include "ui/page.hpp"
 #include "ui/seq_page.hpp"
+#include "ui/sync_page.hpp"
 #include "ui/widgets.hpp"
 
 namespace ui
@@ -91,6 +92,7 @@ private:
  EnvPage env_;
  ModPage mod_;
  SeqPage seq_;
+ SyncPage sync_;
  MidiPage midi_;
  DebugPage dbg_;
  TabBar bar_;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// ADSR envelope, analog style.
+// ADSR envelope, analog style. (The LFO lives in dsp/lfo.hpp.)
 //
 // Each stage is a one-pole glide towards a target, like a capacitor
 // charging through a resistor:
@@ -112,31 +112,6 @@ class Envelope
 
 	Stage stage_ = Stage::Idle;
 	float level_ = 0.0f;
-};
-
-// Triangle LFO, ticked at control rate (once per rendered block).
-class Lfo
-{
-   public:
-	// 0..1 knob to Hz: 0.05 .. 20 Hz, exponential.
-	static float rate_hz(float r);
-
-	// Advance by `frames` samples at `hz` and return the value, -1..1.
-	float tick(float hz, int frames, float sample_rate = kSampleRate)
-	{
-		phase_ += hz * static_cast<float>(frames) / sample_rate;
-		phase_ -= static_cast<float>(static_cast<int>(phase_));
-		// Phase 0 -> -1, 0.25 -> 0, 0.5 -> 1, 0.75 -> 0.
-		const float p = phase_ < 0.5f ? phase_ : 1.0f - phase_;  // 0..0.5
-		value_ = 4.0f * p - 1.0f;
-		return value_;
-	}
-
-	float value() const { return value_; }
-
-   private:
-	float phase_ = 0.25f;  // starts at the zero crossing going up
-	float value_ = 0.0f;
 };
 
 }  // namespace dsp

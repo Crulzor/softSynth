@@ -15,7 +15,9 @@
 #include "dsp/engine.hpp"
 #include "dsp/envelope.hpp"
 #include "dsp/ladder.hpp"
+#include "dsp/lfo.hpp"
 #include "dsp/sine_table.hpp"
+#include "params/parameters.hpp"
 #include "dsp/spectrum.hpp"
 
 using namespace dsp;
@@ -654,4 +656,308 @@ TEST_CASE("a render call longer than one block is cut into blocks")
 	}
 	CHECK(big == ref);
 	CHECK(all_finite(big));
+}
+
+// --- LFO -----------------------------------------------------------------------
+
+TEST_CASE("the LFO shapes have the right values through a cycle")
+{
+	using S = dsp::LfoShape;
+	CHECK(Lfo::shape_at(S::Sine, 0.25f, 0) == doctest::Approx(1.0f));
+	CHECK(Lfo::shape_at(S::Sine, 0.75f, 0) == doctest::Approx(-1.0f));
+	CHECK(Lfo::shape_at(S::Triangle, 0.0f, 0) == doctest::Approx(0.0f));
+	CHECK(Lfo::shape_at(S::Triangle, 0.25f, 0) == doctest::Approx(1.0f));
+	CHECK(Lfo::shape_at(S::Triangle, 0.5f, 0) == doctest::Approx(0.0f));
+	CHECK(Lfo::shape_at(S::Triangle, 0.75f, 0) == doctest::Approx(-1.0f));
+	CHECK(Lfo::shape_at(S::Saw, 0.0f, 0) == doctest::Approx(-1.0f));
+	CHECK(Lfo::shape_at(S::Saw, 0.5f, 0) == doctest::Approx(0.0f));
+	CHECK(Lfo::shape_at(S::Square, 0.2f, 0) == 1.0f);
+	CHECK(Lfo::shape_at(S::Square, 0.7f, 0) == -1.0f);
+	CHECK(Lfo::shape_at(S::SampleHold, 0.3f, 0.42f) == 0.42f);
+}
+
+TEST_CASE("a synced LFO is locked to the song position")
+{
+	// 1/4 = 4 steps per cycle: step 1 is a quarter through, step 6 half way
+	// through the second cycle - whatever happened before.
+	Lfo l;
+	CHECK(l.lock(1.0f, 4.0f, dsp::LfoShape::Saw) == doctest::Approx(-0.5f));
+	CHECK(l.lock(6.0f, 4.0f, dsp::LfoShape::Saw) == doctest::Approx(0.0f));
+	CHECK(l.lock(16.0f, 16.0f, dsp::LfoShape::Saw) == doctest::Approx(-1.0f));
+	// 2 bars: step 16 is half way.
+	CHECK(l.lock(16.0f, 32.0f, dsp::LfoShape::Square) == -1.0f);
+}
+
+TEST_CASE("S&H picks a new level once per cycle, free or synced")
+{
+	Lfo l;
+	const float a = l.lock(0.5f, 4.0f, dsp::LfoShape::SampleHold);
+	CHECK(l.lock(3.9f, 4.0f, dsp::LfoShape::SampleHold) == a);  // held
+	const float b = l.lock(4.1f, 4.0f, dsp::LfoShape::SampleHold);
+	CHECK(b != a);
+	CHECK(b >= -1.0f);
+	CHECK(b <= 1.0f);
+
+	// Free: 10 Hz -> a new level every 4800 frames.
+	Lfo f;
+	std::vector<float> seen;
+	for(int i = 0; i < 48000; i += 64)
+	{
+		const float v = f.tick(10.0f, 64, dsp::LfoShape::SampleHold);
+		if(seen.empty() || v != seen.back())
+		{
+			seen.push_back(v);
+		}
+	}
+	CHECK(seen.size() >= 9);
+	CHECK(seen.size() <= 11);
+}
+
+TEST_CASE("a synced LFO runs at the musical rate while stopped")
+{
+	// 1/4 at 120 BPM = 2 Hz: half a second per cycle.
+	CHECK(Lfo::synced_hz(4.0f, 120.0f) == doctest::Approx(2.0f));
+	CHECK(Lfo::synced_hz(64.0f, 120.0f) == doctest::Approx(0.125f));
+	Lfo l;
+	int wraps = 0;
+	float prev = -2.0f;
+	for(int i = 0; i < 52800; i += 64)  // 1.1 s: wraps at 0.5 and 1.0 s
+	{
+		const float v =
+		    l.tick(Lfo::synced_hz(4.0f, 120.0f), 64, dsp::LfoShape::Saw);
+		wraps += v < prev ? 1 : 0;
+		prev = v;
+	}
+	CHECK(wraps == 2);
+}
+
+TEST_CASE("the engine's LFO follows shape, mode and song position")
+{
+	init_table();
+	TestPatch tp(sp::Basic::Sine);
+	tp.p.mix = 0.0f;
+	tp.p.lfo_shape[0] = static_cast<std::uint8_t>(dsp::LfoShape::Square);
+	tp.p.lfo_sync[0] = true;
+	tp.p.lfo_div[0] = 5;  // 1/4
+	tp.p.routes[0] = ModRoute{static_cast<std::uint8_t>(ModSrc::Lfo1),
+	                          static_cast<std::uint8_t>(ModDst::Pitch), 1.0f};
+	// First half of the cycle: square = +1 -> +12 semitones; second half -1.
+	Engine up;
+	tp.p.seq_pos = 1.0f;
+	up.note_on(57, 127, 0);
+	const std::vector<float> a = render_engine(up, tp.p, 24000);
+	CHECK(tone(a, 440.0) > 10.0 * tone(a, 220.0));
+	Engine down;
+	tp.p.seq_pos = 3.0f;
+	down.note_on(57, 127, 0);
+	const std::vector<float> b = render_engine(down, tp.p, 24000);
+	CHECK(tone(b, 110.0) > 10.0 * tone(b, 220.0));
+}
+
+TEST_CASE("the UI's LFO name lists match the engine's tables")
+{
+	const params::Spec& len = params::spec(params::Id::Lfo1Div);
+	CHECK(static_cast<int>(len.max) + 1 == dsp::kLfoDivCount);
+	const params::Spec& shp = params::spec(params::Id::Lfo1Shape);
+	CHECK(static_cast<int>(shp.max) + 1 ==
+	      static_cast<int>(dsp::LfoShape::Count));
+}
+
+TEST_CASE("the engine reports the shape and mix as modulated, for the scope")
+{
+	init_table();
+	TestPatch tp(sp::Basic::Saw);
+	tp.p.shape[0] = 0.2f;
+	tp.p.shape[1] = 0.6f;
+	tp.p.mix = 0.5f;
+	// A synced square LFO on SHP (+0.5) and on MIX (-0.25).
+	tp.p.lfo_shape[0] = static_cast<std::uint8_t>(dsp::LfoShape::Square);
+	tp.p.lfo_sync[0] = true;
+	tp.p.lfo_div[0] = 5;  // 1/4: steps 0..2 high, 2..4 low
+	tp.p.routes[0] = ModRoute{static_cast<std::uint8_t>(ModSrc::Lfo1),
+	                          static_cast<std::uint8_t>(ModDst::Shape), 0.5f};
+	tp.p.routes[1] = ModRoute{static_cast<std::uint8_t>(ModSrc::Lfo1),
+	                          static_cast<std::uint8_t>(ModDst::Mix), -0.25f};
+	Engine e;
+	float buf[kBlockSize];
+	tp.p.seq_pos = 1.0f;  // LFO +1
+	e.render(tp.p, buf, kBlockSize);
+	CHECK(e.live_shape(0) == doctest::Approx(0.7f));
+	CHECK(e.live_shape(1) == doctest::Approx(1.0f));  // clamped
+	CHECK(e.live_mix() == doctest::Approx(0.25f));
+	tp.p.seq_pos = 3.0f;  // LFO -1
+	e.render(tp.p, buf, kBlockSize);
+	CHECK(e.live_shape(0) == doctest::Approx(0.0f));   // clamped
+	CHECK(e.live_shape(1) == doctest::Approx(0.1f));
+	CHECK(e.live_mix() == doctest::Approx(0.75f));
+
+	// ENV -> SHP uses the newest sounding voice's envelope; none: no mod.
+	TestPatch te(sp::Basic::Saw);
+	te.p.shape[0] = 0.1f;
+	te.p.routes[0] = ModRoute{static_cast<std::uint8_t>(ModSrc::AmpEnv),
+	                          static_cast<std::uint8_t>(ModDst::Shape), 0.5f};
+	Engine f;
+	f.render(te.p, buf, kBlockSize);
+	CHECK(f.live_shape(0) == doctest::Approx(0.1f));
+	f.note_on(60, 100, 0);
+	render_engine(f, te.p, 4800);  // sustain 1: envelope at the top
+	CHECK(f.live_shape(0) == doctest::Approx(0.6f).epsilon(0.01));
+}
+
+// --- PWM ----------------------------------------------------------------------
+
+namespace
+{
+
+// Render a spectrum with PW through the oscillator.
+std::vector<float> render_pw(const float* w, float pw, float hz, int n)
+{
+	float zero[sp::kHarmonics] = {};
+	AdditiveOsc osc;
+	std::vector<float> out(static_cast<std::size_t>(n));
+	for(int i = 0; i < n; i += kBlockSize)
+	{
+		osc.render_pw(w, zero, sp::kHarmonics, 0.0f, 0.0f, pw, hz / kSr,
+		              &out[i], std::min(kBlockSize, n - i));
+	}
+	return out;
+}
+
+}  // namespace
+
+TEST_CASE("PWM is the wave minus a shifted copy, for any spectrum")
+{
+	init_table();
+	for(float pw : {0.05f, 0.1f, 0.4f, 0.9f})
+	{
+		for(std::uint32_t seed : {3u, 4242u})
+		{
+			CAPTURE(pw);
+			CAPTURE(seed);
+			float w[sp::kHarmonics];
+			sp::make_random(seed, w);
+			// 100 Hz: one cycle is 480 samples.
+			const std::vector<float> got = render_pw(w, pw, 100.0f, 480);
+			std::vector<float> cyc(480);
+			sp::render_cycle(w, cyc.data(), 480);
+			float amount;
+			float width;
+			pw_map(pw, amount, width);
+			const int shift = static_cast<int>(width * 480.0f + 0.5f);
+			double worst = 0.0;
+			for(int i = 0; i < 480; ++i)
+			{
+				// Compare at whole-sample shifts only.
+				if(std::fabs(width * 480.0f - static_cast<float>(shift)) > 1e-3f)
+				{
+					break;
+				}
+				const double want =
+				    (cyc[i] - amount * cyc[(i + shift) % 480]) / (1.0 + amount);
+				worst = std::max(worst, std::fabs(got[i] - want));
+			}
+			CHECK(worst < 5e-4);
+		}
+	}
+}
+
+TEST_CASE("PWM on a saw is a pulse: 50 % has no even harmonics")
+{
+	init_table();
+	float saw[sp::kHarmonics];
+	sp::make_basic(sp::Basic::Saw, saw);
+	const std::vector<float> sq = render_pw(saw, 0.1f, 200.0f, 48000);  // 50 %
+	CHECK(tone(sq, 400.0) < 1e-3);  // 2nd harmonic gone
+	CHECK(tone(sq, 600.0) > 0.05);  // 3rd there
+	// 25 % width: the 4th harmonic vanishes, the 2nd is back.
+	float amount;
+	float width;
+	const float pw25 = 0.1f + 0.9f * (0.5f - 0.25f) / 0.45f;
+	pw_map(pw25, amount, width);
+	REQUIRE(width == doctest::Approx(0.25f));
+	const std::vector<float> p25 = render_pw(saw, pw25, 200.0f, 48000);
+	CHECK(tone(p25, 800.0) < 1e-3);
+	CHECK(tone(p25, 400.0) > 0.05);
+	CHECK(peak(p25) <= 1.0f);
+}
+
+TEST_CASE("PW knob mapping: off, fade-in at 50 %, then narrower")
+{
+	float a;
+	float w;
+	pw_map(0.0f, a, w);
+	CHECK(a == 0.0f);
+	pw_map(0.05f, a, w);
+	CHECK(a == doctest::Approx(0.5f));
+	CHECK(w == 0.5f);
+	pw_map(1.0f, a, w);
+	CHECK(a == 1.0f);
+	CHECK(w == doctest::Approx(0.05f));
+}
+
+TEST_CASE("the engine plays PWM and LFO -> PW moves it")
+{
+	init_table();
+	TestPatch tp(sp::Basic::Saw);
+	tp.p.mix = 0.0f;
+	tp.p.pw[0] = 0.1f;  // 50 %: a square from the saw
+	Engine e;
+	e.note_on(57, 127, 0);  // 220 Hz
+	const std::vector<float> sq = render_engine(e, tp.p, 24000);
+	CHECK(tone(sq, 440.0) < 0.02 * tone(sq, 660.0));
+	// PW routed from a synced square LFO: +0.9 narrows it to 5 %, where the
+	// 2nd harmonic is back.
+	tp.p.lfo_shape[0] = static_cast<std::uint8_t>(dsp::LfoShape::Square);
+	tp.p.lfo_sync[0] = true;
+	tp.p.seq_pos = 1.0f;  // LFO = +1
+	tp.p.routes[0] = ModRoute{static_cast<std::uint8_t>(ModSrc::Lfo1),
+	                          static_cast<std::uint8_t>(ModDst::Pw), 0.9f};
+	Engine f;
+	f.note_on(57, 127, 0);
+	const std::vector<float> narrow = render_engine(f, tp.p, 24000);
+	CHECK(tone(narrow, 440.0) > 0.2 * tone(narrow, 220.0));
+	CHECK(f.live_pw(0) == doctest::Approx(1.0f));
+}
+
+TEST_CASE("per-oscillator destinations only move their own oscillator")
+{
+	init_table();
+	auto route = [](ModDst dst, float amount)
+	{
+		return ModRoute{static_cast<std::uint8_t>(ModSrc::Lfo1),
+		                static_cast<std::uint8_t>(dst), amount};
+	};
+	// A synced square LFO held at +1 (song position 1 of a 1/4 cycle).
+	auto patch = [](TestPatch& tp)
+	{
+		tp.p.lfo_shape[0] = static_cast<std::uint8_t>(dsp::LfoShape::Square);
+		tp.p.lfo_sync[0] = true;
+		tp.p.lfo_div[0] = 5;
+		tp.p.seq_pos = 1.0f;
+	};
+
+	// PT2 +1/12 = +1 semitone on osc 2 only: osc 1 stays on A3.
+	TestPatch tp(sp::Basic::Sine);
+	patch(tp);
+	tp.p.routes[0] = route(ModDst::Pitch2, 1.0f / 12.0f);
+	Engine e;
+	e.note_on(57, 127, 0);
+	const std::vector<float> x = render_engine(e, tp.p, 48000);
+	CHECK(tone(x, 220.0) > 0.05);       // osc 1 untouched
+	CHECK(tone(x, 233.08) > 0.05);      // osc 2 a semitone up
+	CHECK(tone(x, 220.0 * 0.5) < 0.01);
+
+	// SH1 and the "both" SHP add up for osc 1; osc 2 gets only SHP.
+	TestPatch ts(sp::Basic::Saw);
+	patch(ts);
+	ts.p.routes[0] = route(ModDst::Shape, 0.2f);
+	ts.p.routes[1] = route(ModDst::Shape1, 0.3f);
+	ts.p.routes[2] = route(ModDst::Pw2, 0.4f);
+	Engine f;
+	float buf[kBlockSize];
+	f.render(ts.p, buf, kBlockSize);
+	CHECK(f.live_shape(0) == doctest::Approx(0.5f));
+	CHECK(f.live_shape(1) == doctest::Approx(0.2f));
+	CHECK(f.live_pw(0) == doctest::Approx(0.0f));
+	CHECK(f.live_pw(1) == doctest::Approx(0.4f));
 }

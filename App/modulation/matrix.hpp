@@ -18,10 +18,19 @@ enum class Source : std::uint8_t
 	Count
 };
 
+// Same order as dsp::ModDst: the oscillator destinations as both / osc 1 /
+// osc 2.
 enum class Dest : std::uint8_t
 {
 	Pitch,
+	Pitch1,
+	Pitch2,
 	Shape,
+	Shape1,
+	Shape2,
+	Pw,
+	Pw1,
+	Pw2,
 	Mix,
 	Amp,
 	Cutoff,
@@ -30,8 +39,8 @@ enum class Dest : std::uint8_t
 
 struct Row
 {
-	int src;  // modulation::Source
-	int dst;  // modulation::Dest
+	int src;       // modulation::Source
+	int dst;       // modulation::Dest
 	float amount;  // -1..1, 0 = no modulation
 };
 
@@ -43,7 +52,9 @@ struct Matrix
 };
 
 inline constexpr const char* kSourceNames[] = {"LF1", "LF2", "ENV", "TPM"};
-inline constexpr const char* kDestNames[] = {"PIT", "SHP", "MIX", "AMP", "CUT"};
+inline constexpr const char* kDestNames[] = {"PIT", "PT1", "PT2", "SHP",
+                                             "SH1", "SH2", "PW",  "PW1",
+                                             "PW2", "MIX", "AMP", "CUT"};
 
 static_assert(sizeof(kSourceNames) / sizeof(kSourceNames[0]) ==
                   static_cast<int>(Source::Count),

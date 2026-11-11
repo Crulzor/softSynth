@@ -19,10 +19,20 @@ constexpr uint32_t kTotalSamples = kHalfSamples * 2;
 
 __attribute__((section(".dma_buffer"),
                aligned(32))) int16_t g_buffer[kTotalSamples];
+// Input capture, same shape. Zero until the first capture lands, so the
+// start() pre-fill reads silence.
+__attribute__((section(".dma_buffer"),
+               aligned(32))) int16_t g_rx_buffer[kTotalSamples];
 
 SAI_HandleTypeDef g_sai{};
+SAI_HandleTypeDef g_sai_rx{};
 DMA_HandleTypeDef g_dma{};
+DMA_HandleTypeDef g_dma_rx{};
 audio_out::RenderFn g_render = nullptr;
+
+// Half-buffer callbacks since start: the real sample rate is
+// blocks * kBlockSize / seconds (read over SWD, never reset).
+volatile uint32_t g_blocks = 0;
 
 void clock_config()
 {
@@ -43,6 +53,17 @@ void clock_config()
 	periph.PLL2.PLL2FRACN = 0;
 	HAL_RCCEx_PeriphCLKConfig(&periph);
 }
+
+// The CubeMX HAL_SAI_MspInit() (Src/stm32h7xx_hal_msp.c) switches the SAI2
+// kernel clock to PLL1Q on every HAL_SAI_Init(). PLL1Q is 48 MHz (set for
+// USB), which with MCKDIV 4 gives 46.875 kHz: everything 41 cents flat and
+// 2.3 % slow - measured on the board 2026-11-11. So after the SAI inits the
+// mux goes back to PLL2, and MCKDIV is fixed rather than computed from
+// whatever clock happened to be selected during init.
+void select_pll2() { __HAL_RCC_SAI23_CONFIG(RCC_SAI23CLKSOURCE_PLL2); }
+
+// 49.142 MHz / 4 = 12.2855 MHz MCLK = 256 x 47.990 kHz.
+constexpr uint32_t kMckDiv = 4;
 
 void gpio_init()
 {
@@ -75,6 +96,47 @@ void dma_init()
 
 	HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 5, 0);
 	HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+
+	// Capture: DMA2_Stream4 (the BSP's choice), circular into g_rx_buffer.
+	// No interrupt of its own: the TX callback picks up whichever half is
+	// complete (rx_block()).
+	g_dma_rx.Instance = DMA2_Stream4;
+	g_dma_rx.Init.Request = DMA_REQUEST_SAI2_B;
+	g_dma_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+	g_dma_rx.Init.PeriphInc = DMA_PINC_DISABLE;
+	g_dma_rx.Init.MemInc = DMA_MINC_ENABLE;
+	g_dma_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+	g_dma_rx.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+	g_dma_rx.Init.Mode = DMA_CIRCULAR;
+	g_dma_rx.Init.Priority = DMA_PRIORITY_HIGH;
+	g_dma_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+	HAL_DMA_Init(&g_dma_rx);
+	__HAL_LINKDMA(&g_sai_rx, hdmarx, g_dma_rx);
+}
+
+// The capture half the DMA is *not* writing: the most recent complete block.
+const int16_t* rx_block()
+{
+	const uint32_t remaining = __HAL_DMA_GET_COUNTER(&g_dma_rx);
+	return remaining > kHalfSamples ? &g_rx_buffer[kHalfSamples]
+	                                : &g_rx_buffer[0];
+}
+
+// Frame / slot layout shared by both blocks (the codec's AIF1 format).
+void frame_init(SAI_HandleTypeDef& h)
+{
+	// WM8994 standard frame: 128-bit frame, 64-bit active, FS = channel id.
+	h.FrameInit.FrameLength = 128;
+	h.FrameInit.ActiveFrameLength = 64;
+	h.FrameInit.FSDefinition = SAI_FS_CHANNEL_IDENTIFICATION;
+	h.FrameInit.FSPolarity = SAI_FS_ACTIVE_LOW;
+	h.FrameInit.FSOffset = SAI_FS_BEFOREFIRSTBIT;
+
+	// Four 16-bit slots; left in slot 0, right in slot 2.
+	h.SlotInit.FirstBitOffset = 0;
+	h.SlotInit.SlotSize = SAI_SLOTSIZE_DATASIZE;
+	h.SlotInit.SlotNumber = 4;
+	h.SlotInit.SlotActive = SAI_SLOTACTIVE_0 | SAI_SLOTACTIVE_2;
 }
 
 }  // namespace
@@ -96,8 +158,8 @@ bool init()
 	g_sai.Init.OutputDrive = SAI_OUTPUTDRIVE_ENABLE;
 	g_sai.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
 	g_sai.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
-	g_sai.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_48K;
-	g_sai.Init.Mckdiv = 0;  // computed by HAL from AudioFrequency
+	g_sai.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_MCKDIV;
+	g_sai.Init.Mckdiv = kMckDiv;
 	g_sai.Init.MonoStereoMode = SAI_STEREOMODE;
 	g_sai.Init.CompandingMode = SAI_NOCOMPANDING;
 	g_sai.Init.TriState = SAI_OUTPUT_NOTRELEASED;
@@ -107,24 +169,41 @@ bool init()
 	g_sai.Init.ClockStrobing = SAI_CLOCKSTROBING_RISINGEDGE;
 	g_sai.Init.MckOverSampling = SAI_MCK_OVERSAMPLING_DISABLE;
 	g_sai.Init.MckOutput = SAI_MCK_OUTPUT_ENABLE;  // drive MCLK for the codec
-
-	// WM8994 standard frame: 128-bit frame, 64-bit active, FS = channel id.
-	g_sai.FrameInit.FrameLength = 128;
-	g_sai.FrameInit.ActiveFrameLength = 64;
-	g_sai.FrameInit.FSDefinition = SAI_FS_CHANNEL_IDENTIFICATION;
-	g_sai.FrameInit.FSPolarity = SAI_FS_ACTIVE_LOW;
-	g_sai.FrameInit.FSOffset = SAI_FS_BEFOREFIRSTBIT;
-
-	// Four 16-bit slots; the codec listens on slots 0 (left) and 2 (right).
-	g_sai.SlotInit.FirstBitOffset = 0;
-	g_sai.SlotInit.SlotSize = SAI_SLOTSIZE_DATASIZE;
-	g_sai.SlotInit.SlotNumber = 4;
-	g_sai.SlotInit.SlotActive = SAI_SLOTACTIVE_0 | SAI_SLOTACTIVE_2;
-
+	frame_init(g_sai);
 	if(HAL_SAI_Init(&g_sai) != HAL_OK)
 	{
 		return false;
 	}
+
+	// Block B: receiver, clocked by Block A (synchronous slave). The MSP
+	// init puts PG10 (SD_B) on AF10.
+	g_sai_rx.Instance = SAI2_Block_B;
+	g_sai_rx.Init.AudioMode = SAI_MODESLAVE_RX;
+	g_sai_rx.Init.Synchro = SAI_SYNCHRONOUS;
+	g_sai_rx.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
+	g_sai_rx.Init.OutputDrive = SAI_OUTPUTDRIVE_DISABLE;
+	g_sai_rx.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
+	g_sai_rx.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_1QF;
+	g_sai_rx.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_MCKDIV;
+	g_sai_rx.Init.Mckdiv = 0;
+	g_sai_rx.Init.MonoStereoMode = SAI_STEREOMODE;
+	g_sai_rx.Init.CompandingMode = SAI_NOCOMPANDING;
+	g_sai_rx.Init.TriState = SAI_OUTPUT_NOTRELEASED;
+	g_sai_rx.Init.Protocol = SAI_FREE_PROTOCOL;
+	g_sai_rx.Init.DataSize = SAI_DATASIZE_16;
+	g_sai_rx.Init.FirstBit = SAI_FIRSTBIT_MSB;
+	g_sai_rx.Init.ClockStrobing = SAI_CLOCKSTROBING_RISINGEDGE;
+	g_sai_rx.Init.MckOverSampling = SAI_MCK_OVERSAMPLING_DISABLE;
+	g_sai_rx.Init.MckOutput = SAI_MCK_OUTPUT_DISABLE;
+	frame_init(g_sai_rx);
+	if(HAL_SAI_Init(&g_sai_rx) != HAL_OK)
+	{
+		return false;
+	}
+
+	// Both inits went through the CubeMX MSP, which re-selected PLL1Q.
+	select_pll2();
+
 	// Enabling the block starts MCLK toggling so the codec can lock its PLL.
 	__HAL_SAI_ENABLE(&g_sai);
 	return true;
@@ -133,16 +212,28 @@ bool init()
 void start(RenderFn render)
 {
 	g_render = render;
-	// Prime the whole buffer so the first samples out are real audio.
+	// Prime the whole buffer so the first samples out are real audio (the
+	// capture buffer is still all zeros: silence in).
 	if(g_render != nullptr)
 	{
-		g_render(&g_buffer[0], kTotalSamples / kChannels);
+		g_render(&g_buffer[0], &g_rx_buffer[0], kTotalSamples / kChannels);
 	}
+	// Receiver first: it then always runs a few frames ahead of the
+	// transmitter, so the capture half that matches a TX callback is
+	// complete by the time the callback reads it.
+	HAL_SAI_Receive_DMA(&g_sai_rx, reinterpret_cast<uint8_t*>(g_rx_buffer),
+	                    kTotalSamples);
 	HAL_SAI_Transmit_DMA(&g_sai, reinterpret_cast<uint8_t*>(g_buffer),
 	                     kTotalSamples);
 }
 
-void stop() { HAL_SAI_DMAStop(&g_sai); }
+void stop()
+{
+	HAL_SAI_DMAStop(&g_sai);
+	HAL_SAI_DMAStop(&g_sai_rx);
+}
+
+uint32_t blocks() { return g_blocks; }
 
 }  // namespace audio_out
 
@@ -152,7 +243,8 @@ extern "C" void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef* hsai)
 {
 	if(hsai->Instance == SAI2_Block_A && g_render != nullptr)
 	{
-		g_render(&g_buffer[0], kFramesPerBuffer);  // refill first half
+		++g_blocks;
+		g_render(&g_buffer[0], rx_block(), kFramesPerBuffer);  // first half
 	}
 }
 
@@ -160,7 +252,8 @@ extern "C" void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef* hsai)
 {
 	if(hsai->Instance == SAI2_Block_A && g_render != nullptr)
 	{
-		g_render(&g_buffer[kHalfSamples],
+		++g_blocks;
+		g_render(&g_buffer[kHalfSamples], rx_block(),
 		         kFramesPerBuffer);  // refill second half
 	}
 }

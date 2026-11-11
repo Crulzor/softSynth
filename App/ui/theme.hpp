@@ -2,7 +2,7 @@
 //
 // UI colour palette. Dark background, grey panels, and one accent colour per
 // section (Elektron-ish): OSC orange, FILTER cyan, ENV green, MOD violet,
-// SEQ amber, MIDI pink. A widget draws "this is a value / this is on" in its
+// SEQ amber, SYNC sky blue, MIDI pink. A widget draws "this is a value / this is on" in its
 // own accent (Widget::set_accent), so a page reads as one colour and the tab
 // bar tells you where you are.
 #pragma once
@@ -33,6 +33,7 @@ inline constexpr display::Color kEnvAccent{70, 220, 120};
 inline constexpr display::Color kModAccent{170, 110, 255};
 inline constexpr display::Color kSeqAccent{255, 200, 40};
 inline constexpr display::Color kMidiAccent{255, 80, 160};
+inline constexpr display::Color kSyncAccent{100, 160, 255};
 inline constexpr display::Color kDbgAccent{190, 190, 190};
 
 // The default accent for a widget nobody coloured (the DBG page's mix).

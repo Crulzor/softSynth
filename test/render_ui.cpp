@@ -6,7 +6,7 @@
 //
 //   ./render_ui [prefix]
 //
-// Writes <prefix>_{osc,env,mod,seq,midi,dbg,picker,chords}.ppm (default
+// Writes <prefix>_{osc,env,mod,seq,sync,midi,dbg,picker,chords}.ppm (default
 // prefix "ui").
 // Convert with e.g. `magick ui_seq.ppm ui_seq.png`.
 #include <cstdio>
@@ -55,7 +55,13 @@ int main(int argc, char** argv)
 	params.set(params::Id::Osc2Pitch, 7.0f);
 	params.set(params::Id::Osc2Octave, -1.0f);
 	params.set(params::Id::OscMix, 0.3f);
+	params.set(params::Id::Osc2Pw, 0.6f);  // osc 2: a ~25 % pulse
 	params.set(params::Id::EnvDecay, 0.7f);
+	// LFO 1 synced (1/8 dotted) with S&H, LFO 2 a free sine.
+	params.set(params::Id::Lfo1Mode, 1.0f);
+	params.set(params::Id::Lfo1Div, 7.0f);
+	params.set(params::Id::Lfo1Shape, 4.0f);
+	params.set(params::Id::Lfo2Shape, 0.0f);
 	const int on[] = {0, 3, 6, 8, 11, 14};
 	const std::uint8_t notes[] = {48, 55, 60, 51, 63, 58};
 	for(int i = 0; i < 6; ++i)
@@ -73,9 +79,10 @@ int main(int argc, char** argv)
 	sequencer::Transport transport;
 	modulation::Matrix matrix;
 	// Three live routes, so the MOD page shows live and idle rows.
-	matrix.rows[0] = {0, 0, 0.25f};  // LFO1 -> pitch
-	matrix.rows[1] = {2, 4, 0.6f};   // ENV -> cutoff
-	matrix.rows[3] = {1, 1, -0.4f};  // LFO2 -> shape
+	using modulation::Dest;
+	matrix.rows[0] = {0, static_cast<int>(Dest::Pitch), 0.25f};    // LFO1
+	matrix.rows[1] = {2, static_cast<int>(Dest::Cutoff), 0.6f};    // ENV
+	matrix.rows[3] = {1, static_cast<int>(Dest::Shape2), -0.4f};   // LFO2
 	params::WaveSlots waves;
 	waves.randomize(0, 1, 1234);  // osc 1 morphs saw -> a random shape
 	ui::Ui ui(params, pattern, transport, matrix, waves);
@@ -131,10 +138,21 @@ int main(int argc, char** argv)
 	frame(true, 400, 17);  // dismiss
 	frame(false, 0, 0);
 
-	tab(5);
+	tab(6);
 	shot("dbg");
-	tab(4);
+	tab(5);
 	shot("midi");
+	// SYNC with the clock input selected and a clock arriving.
+	params.set(params::Id::ClockSource, 1.0f);
+	transport.clock.level[0] = 0.62f;
+	transport.clock.threshold[0] = 0.25f;
+	transport.clock.edges[0] = 1234;
+	transport.clock.level[1] = 0.01f;
+	transport.clock.threshold[1] = 0.02f;
+	transport.clock.bpm = 121.3f;
+	tab(4);
+	shot("sync");
+	params.set(params::Id::ClockSource, 0.0f);
 	tab(0);
 	shot("osc");
 	tab(1);
@@ -148,7 +166,7 @@ int main(int argc, char** argv)
 		return 1;
 	}
 	std::printf(
-	    "render_ui: wrote %s_{osc,env,mod,seq,midi,dbg,picker,chords}.ppm\n",
+	    "render_ui: wrote %s_{osc,env,mod,seq,sync,midi,dbg,picker,chords}.ppm\n",
 	    prefix.c_str());
 	return 0;
 }

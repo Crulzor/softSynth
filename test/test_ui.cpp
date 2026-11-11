@@ -128,7 +128,7 @@ struct Rig
 	{
 		ui.redraw_all();
 		// The tests edit the debug page: switch to its tab first.
-		frame(true, 264, 259);  // DBG tab, centre
+		frame(true, 312, 259);  // DBG tab, centre
 		frame(false, 0, 0);
 	}
 
@@ -354,7 +354,7 @@ TEST_CASE("the tempo slider follows the finger")
 TEST_CASE("tapping a tab switches the page")
 {
 	Rig r;
-	CHECK(r.ui.page() == 5);  // the rig starts on the DBG tab
+	CHECK(r.ui.page() == 6);  // the rig starts on the DBG tab
 	r.tap(24, 259);
 	CHECK(r.ui.page() == 0);
 	r.tap(72, 259);
@@ -364,16 +364,18 @@ TEST_CASE("tapping a tab switches the page")
 	r.tap(168, 259);
 	CHECK(r.ui.page() == 3);
 	r.tap(216, 259);
-	CHECK(r.ui.page() == 4);  // MIDI
+	CHECK(r.ui.page() == 4);  // SYNC
 	r.tap(264, 259);
-	CHECK(r.ui.page() == 5);  // DBG
+	CHECK(r.ui.page() == 5);  // MIDI
+	r.tap(312, 259);
+	CHECK(r.ui.page() == 6);  // DBG
 }
 
 TEST_CASE("the MIDI page shows the link state and the incoming notes")
 {
 	Rig r;
-	r.tap(216, 259);  // MIDI tab
-	REQUIRE(r.ui.page() == 4);
+	r.tap(264, 259);  // MIDI tab
+	REQUIRE(r.ui.page() == 5);
 	CHECK(r.ui.midi().shown_link().state == midi::LinkState::NoDevice);
 
 	midi::Link link;
@@ -501,6 +503,50 @@ TEST_CASE("the MOD page edits the matrix and the LFO rates")
 	r.frame(true, 44, 170);
 	CHECK(r.params.get(Id::Lfo1Rate) > before);
 	r.frame(false);
+}
+
+TEST_CASE("the MOD page picks the LFO shape and switches FREE / SYNC")
+{
+	Rig r;
+	r.tap(120, 259);  // MOD tab
+	// Mirrors mod_page.cpp: per LFO (240 px apart) the rate knob at x 12,
+	// the shape button at x 82, the mode button at x 160; row y 172..215.
+	CHECK(r.params.get(Id::Lfo1Shape) == 1.0f);  // TRI
+	r.tap(118, 194);
+	CHECK(r.params.get(Id::Lfo1Shape) == 2.0f);  // SAW
+	for(int i = 0; i < 4; ++i)
+	{
+		r.tap(118, 194);
+	}
+	CHECK(r.params.get(Id::Lfo1Shape) == 1.0f);  // wrapped round
+	r.tap(118 + 240, 194);
+	CHECK(r.params.get(Id::Lfo2Shape) == 2.0f);  // LFO 2's own
+
+	// SYNC: the same knob cell now sets the musical length, not the Hz.
+	const auto knob = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 12, 172, 64, 44);
+	};
+	r.frame(false);
+	const std::vector<std::uint16_t> free_knob = knob();
+	r.tap(196, 194);  // MODE
+	CHECK(r.params.get(Id::Lfo1Mode) == 1.0f);
+	r.frame(false);
+	CHECK(knob() != free_knob);  // LEN drawn in its place
+
+	const float rate = r.params.get(Id::Lfo1Rate);
+	const float len = r.params.get(Id::Lfo1Div);
+	r.frame(true, 44, 194);
+	r.frame(true, 44, 166);  // up two steps
+	r.frame(false);
+	CHECK(r.params.get(Id::Lfo1Div) == len + 2.0f);
+	CHECK(r.params.get(Id::Lfo1Rate) == rate);
+
+	// FREE again: the rate knob is back and the knob drives the Hz again.
+	r.tap(196, 194);
+	CHECK(r.params.get(Id::Lfo1Mode) == 0.0f);
+	r.frame(false);
+	CHECK(knob() == free_knob);
 }
 
 TEST_CASE("the ENV page edits the ADSR parameters")
@@ -683,7 +729,8 @@ TEST_CASE("WAV picks a basic wave into both slots; A and B roll random shapes")
 	namespace sp = dsp::spectrum;
 	Rig r;
 	r.tap(24, 259);  // OSC tab
-	// Osc 1's button stack: WAV at y 16..43, A at 52..79, B at 88..115.
+	// Osc 1's button stack: WAV at y 16..37, A at 42..63, B at 68..89, OCT
+	// at 94..115.
 	CHECK(r.waves.basic(0) == sp::Basic::Saw);
 	r.tap(212, 30);  // WAV: saw -> square
 	CHECK(r.waves.basic(0) == sp::Basic::Square);
@@ -693,7 +740,7 @@ TEST_CASE("WAV picks a basic wave into both slots; A and B roll random shapes")
 	CHECK(std::equal(sq, sq + sp::kHarmonics, r.waves.coeffs(0, 1)));
 
 	// B rolls a random shape into slot B only, and keeps it.
-	r.tap(212, 100);
+	r.tap(212, 79);
 	CHECK(r.waves.kind(0, 1) == params::WaveSlots::Kind::Random);
 	CHECK(r.waves.kind(0, 0) == params::WaveSlots::Kind::Basic);
 	CHECK(std::equal(sq, sq + sp::kHarmonics, r.waves.coeffs(0, 0)));
@@ -707,14 +754,14 @@ TEST_CASE("WAV picks a basic wave into both slots; A and B roll random shapes")
 	CHECK(std::equal(b1.begin(), b1.end(), r.waves.coeffs(0, 1)));
 
 	// Another press gives another shape; A rolls slot A.
-	r.tap(212, 100);
+	r.tap(212, 79);
 	CHECK_FALSE(std::equal(b1.begin(), b1.end(), r.waves.coeffs(0, 1)));
-	r.tap(212, 66);
+	r.tap(212, 53);
 	CHECK(r.waves.kind(0, 0) == params::WaveSlots::Kind::Random);
 
 	// Osc 2's stack is its own (row 2 starts at y = 138).
 	CHECK(r.waves.kind(1, 0) == params::WaveSlots::Kind::Basic);
-	r.tap(212, 188);
+	r.tap(212, 175);
 	CHECK(r.waves.kind(1, 0) == params::WaveSlots::Kind::Random);
 	CHECK(r.waves.basic(1) == sp::Basic::Square);
 
@@ -735,7 +782,7 @@ TEST_CASE("the WAVE scope redraws when a slot or the shape knob changes")
 		return grab_rect(display::detail::g_framebuffer, 296, 138, 178, 100);
 	};
 	const std::vector<std::uint16_t> before = scope();
-	r.tap(212, 100);  // B: random -> osc 1 morph target changes
+	r.tap(212, 79);  // B: random -> osc 1 morph target changes
 	r.frame(false);
 	CHECK(scope() == before);  // SHP is 0: still plain slot A
 
@@ -954,4 +1001,172 @@ TEST_CASE("the grid shows a step's chord and a tie")
 	r.pattern.steps[1].tie = true;
 	r.frame(false);
 	CHECK(cell(1) != empty);
+}
+
+TEST_CASE("the SYNC page sets the clock source and division")
+{
+	Rig r;
+	r.tap(216, 259);  // SYNC tab
+	REQUIRE(r.ui.page() == ui::kSyncTab);
+	// Mirrors sync_page.cpp: SRC at (8, 16, 108, 60), DIV right of it.
+	CHECK(r.params.get(Id::ClockSource) == 0.0f);
+	r.tap(60, 46);
+	CHECK(r.params.get(Id::ClockSource) == 1.0f);  // EXT+
+	r.tap(60, 46);
+	CHECK(r.params.get(Id::ClockSource) == 2.0f);  // EXT-
+	r.tap(60, 46);
+	CHECK(r.params.get(Id::ClockSource) == 0.0f);  // wraps to INT
+
+	for(int i = 1; i <= 5; ++i)
+	{
+		r.tap(178, 46);
+		CHECK(r.params.get(Id::ClockDiv) == static_cast<float>(i % 5));
+	}
+}
+
+TEST_CASE("the SYNC page shows the input level, edges and measured tempo")
+{
+	Rig r;
+	r.tap(216, 259);  // SYNC tab
+	r.frame(false);
+	const auto meter = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 8, 98, 464, 40);
+	};
+	const auto tempo = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 240, 16, 232, 60);
+	};
+	const std::vector<std::uint16_t> m0 = meter();
+	const std::vector<std::uint16_t> t0 = tempo();
+
+	// A clock arrives: level, an edge, and a measured tempo (shown only
+	// with an external source).
+	r.transport.clock.level[0] = 0.7f;
+	r.transport.clock.threshold[0] = 0.28f;
+	r.transport.clock.edges[0] = 1;
+	r.transport.clock.bpm = 128.0f;
+	r.frame(false);
+	const std::vector<std::uint16_t> m1 = meter();
+	CHECK(m1 != m0);
+	CHECK(tempo() == t0);  // INT: still the internal tempo
+
+	r.tap(60, 46);  // EXT+
+	r.frame(false);
+	const std::vector<std::uint16_t> t1 = tempo();
+	CHECK(t1 != t0);
+
+	// The edge light goes out again after the blink.
+	for(int i = 0; i < 10; ++i)
+	{
+		r.frame(false);
+	}
+	CHECK(meter() != m1);
+
+	// No clock: the readout changes again (NO CLOCK).
+	r.transport.clock.bpm = 0.0f;
+	r.frame(false);
+	CHECK(tempo() != t1);
+}
+
+TEST_CASE("the status strip fits seven tabs and shows an external tempo")
+{
+	Rig r;
+	r.frame(false);
+	// Nothing drawn by the strip may spill past the bar's right edge, and
+	// the strip starts after the seventh tab.
+	CHECK(r.ui.bar().strip_x() == 7 * 48);
+	const auto strip = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 336, 246, 144, 26);
+	};
+	const std::vector<std::uint16_t> s0 = strip();
+	r.params.set(Id::ClockSource, 1.0f);
+	r.transport.clock.bpm = 97.0f;
+	r.frame(false);
+	CHECK(strip() != s0);
+}
+
+TEST_CASE("the WAVE scope follows the shape as modulated, not just the knob")
+{
+	Rig r;
+	r.tap(24, 259);  // OSC tab
+	r.waves.randomize(0, 1, 77);  // osc 1: saw -> random, so SHP shows
+	r.frame(false);
+	const auto scope = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 296, 138, 178, 100);
+	};
+	// The audio side reports the knob position: no change.
+	r.waves.set_live(0.0f, 0.0f, 0.5f, 0.0f, 0.0f);
+	r.frame(false);
+	const std::vector<std::uint16_t> base = scope();
+	// An LFO pushes osc 1's morph to 0.8 while the knob stays at 0.
+	r.waves.set_live(0.8f, 0.0f, 0.5f, 0.0f, 0.0f);
+	r.frame(false);
+	CHECK(r.params.get(Id::Osc1Shape) == 0.0f);
+	const std::vector<std::uint16_t> moved = scope();
+	CHECK(moved != base);
+	// A sub-visible wobble doesn't redraw; back to 0 restores the picture.
+	r.waves.set_live(0.801f, 0.0f, 0.5f, 0.0f, 0.0f);
+	r.frame(false);
+	CHECK(scope() == moved);
+	r.waves.set_live(0.0f, 0.0f, 0.5f, 0.0f, 0.0f);
+	r.frame(false);
+	CHECK(scope() == base);
+}
+
+TEST_CASE("OSC: the OCT stepper steps the octave, PW has its own knob")
+{
+	Rig r;
+	r.tap(24, 259);  // OSC tab
+	// OCT stepper of osc 1: x 188..237, y 94..115; left third down, right up.
+	CHECK(r.params.get(Id::Osc1Octave) == 0.0f);
+	r.tap(232, 104);
+	CHECK(r.params.get(Id::Osc1Octave) == 1.0f);
+	r.tap(232, 104);
+	r.tap(192, 104);
+	CHECK(r.params.get(Id::Osc1Octave) == 1.0f);
+	r.tap(212, 104);  // the middle does nothing
+	CHECK(r.params.get(Id::Osc1Octave) == 1.0f);
+	for(int i = 0; i < 6; ++i)
+	{
+		r.tap(192, 104);
+	}
+	CHECK(r.params.get(Id::Osc1Octave) == -3.0f);  // clamped
+	r.tap(192, 226);  // osc 2's stepper
+	CHECK(r.params.get(Id::Osc2Octave) == -1.0f);
+
+	// PW: the third knob of each row.
+	CHECK(r.params.get(Id::Osc1Pw) == 0.0f);
+	r.frame(true, 155, 60);
+	r.frame(true, 155, 30);
+	r.frame(false);
+	CHECK(r.params.get(Id::Osc1Pw) > 0.0f);
+	r.frame(true, 155, 180);
+	r.frame(true, 155, 160);
+	r.frame(false);
+	CHECK(r.params.get(Id::Osc2Pw) > 0.0f);
+}
+
+TEST_CASE("the WAVE scope shows pulse width, from the knob or modulation")
+{
+	Rig r;
+	r.tap(24, 259);  // OSC tab
+	r.frame(false);
+	const auto scope = [&]
+	{
+		return grab_rect(display::detail::g_framebuffer, 296, 138, 178, 100);
+	};
+	const std::vector<std::uint16_t> plain = scope();
+	r.params.set(Id::Osc1Pw, 0.5f);  // knob (no audio running: host)
+	r.frame(false);
+	CHECK(scope() != plain);
+	r.params.set(Id::Osc1Pw, 0.0f);
+	r.frame(false);
+	CHECK(scope() == plain);
+	// The audio side reports a modulated PW: the scope follows it.
+	r.waves.set_live(0.0f, 0.0f, 0.5f, 0.7f, 0.0f);
+	r.frame(false);
+	CHECK(scope() != plain);
 }

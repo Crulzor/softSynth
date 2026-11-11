@@ -17,6 +17,11 @@
 // parser's event queue) and the step sequencer (clock -> Player, chords and
 // ties). A sequencer step lands sample-accurately: the block is rendered in
 // two parts, split at the step's frame.
+//
+// The sequencer runs from its own clock (SRC = INT) or from a modular clock
+// on the audio input (EXT+ / EXT-): left channel = clock, right = reset,
+// edges found per sample by sequencer::EdgeDetector and turned into steps by
+// sequencer::ExtClock (see ext_clock.hpp).
 #include <cmath>
 #include <cstdint>
 
@@ -34,6 +39,7 @@
 #include "platform/sysclock.hpp"
 #include "platform/touch.hpp"
 #include "platform/usbhost.hpp"
+#include "sequencer/ext_clock.hpp"
 #include "sequencer/pattern.hpp"
 #include "sequencer/player.hpp"
 #include "sequencer/sequencer.hpp"
@@ -64,6 +70,21 @@ static_assert(static_cast<int>(modulation::Source::Count) ==
                       static_cast<int>(dsp::ModDst::Count) &&
                   modulation::kRows == dsp::kModRoutes,
               "the matrix maps 1:1 onto the engine's routes");
+// The matrix stores destinations by index: same order on both sides.
+static_assert(static_cast<int>(modulation::Dest::Pitch1) ==
+                      static_cast<int>(dsp::ModDst::Pitch1) &&
+                  static_cast<int>(modulation::Dest::Shape2) ==
+                      static_cast<int>(dsp::ModDst::Shape2) &&
+                  static_cast<int>(modulation::Dest::Pw) ==
+                      static_cast<int>(dsp::ModDst::Pw) &&
+                  static_cast<int>(modulation::Dest::Mix) ==
+                      static_cast<int>(dsp::ModDst::Mix) &&
+                  static_cast<int>(modulation::Dest::Cutoff) ==
+                      static_cast<int>(dsp::ModDst::Cutoff),
+              "modulation::Dest and dsp::ModDst list the same destinations");
+static_assert(dsp::kLfoDivCount == 12 &&
+                  static_cast<int>(dsp::LfoShape::Count) == 5,
+              "params' LFO LEN / SHP name lists match the engine");
 
 params::Parameters g_params;
 params::WaveSlots g_waves;
@@ -77,6 +98,10 @@ ui::Ui g_ui(g_params, g_pattern, g_transport, g_matrix, g_waves);
 dsp::Engine g_engine;
 sequencer::Player g_player;
 dsp::Patch g_patch;
+sequencer::ExtClock g_ext_clock(static_cast<float>(audio_out::kSampleRate));
+sequencer::EdgeDetector g_clock_in;  // input L
+sequencer::EdgeDetector g_reset_in;  // input R
+int g_clock_src = 0;                 // last block's ClockSource
 
 // Copy the UI-side model into the engine's patch: one consistent snapshot
 // per block. Every field is a word the UI writes atomically.
@@ -89,6 +114,8 @@ void fill_patch(dsp::Patch& p)
 	p.shape[0] = q.get(Id::Osc1Shape);
 	p.shape[1] = q.get(Id::Osc2Shape);
 	p.mix = q.get(Id::OscMix);
+	p.pw[0] = q.get(Id::Osc1Pw);
+	p.pw[1] = q.get(Id::Osc2Pw);
 	for(int o = 0; o < dsp::kOscs; ++o)
 	{
 		for(int s = 0; s < dsp::kSlots; ++s)
@@ -105,6 +132,12 @@ void fill_patch(dsp::Patch& p)
 	p.drive = q.get(Id::FilterDrive);
 	p.lfo_rate[0] = q.get(Id::Lfo1Rate);
 	p.lfo_rate[1] = q.get(Id::Lfo2Rate);
+	p.lfo_shape[0] = static_cast<uint8_t>(q.get(Id::Lfo1Shape));
+	p.lfo_shape[1] = static_cast<uint8_t>(q.get(Id::Lfo2Shape));
+	p.lfo_sync[0] = q.get(Id::Lfo1Mode) > 0.5f;
+	p.lfo_sync[1] = q.get(Id::Lfo2Mode) > 0.5f;
+	p.lfo_div[0] = static_cast<uint8_t>(q.get(Id::Lfo1Div));
+	p.lfo_div[1] = static_cast<uint8_t>(q.get(Id::Lfo2Div));
 	p.tempo_bpm = q.get(Id::Tempo);
 	for(int i = 0; i < dsp::kModRoutes; ++i)
 	{
@@ -122,8 +155,8 @@ inline int16_t to_i16(float s)
 }
 
 // One block of at most dsp::kBlockSize frames: MIDI events, then the
-// sequencer clock, then the engine.
-void render_block(int16_t* out, int n)
+// sequencer clock (internal, or the clock input in `in`), then the engine.
+void render_block(int16_t* out, const int16_t* in, int n)
 {
 
 	fill_patch(g_patch);
@@ -146,17 +179,58 @@ void render_block(int16_t* out, int n)
 		}
 	}
 
-	// Sequencer: the clock says where a step started or its gate closed;
-	// the player turns that into notes (chords, ties).
+	// Clock input: edges on the left (clock) and right (reset) channels,
+	// measured whether or not it drives the sequencer, so the SYNC page
+	// shows what arrives.
+	const int src = static_cast<int>(g_params.get(params::Id::ClockSource));
+	const bool ext = src != 0;
+	const bool invert = src == 2;
+	const auto div = static_cast<sequencer::ClockDiv>(
+	    static_cast<int>(g_params.get(params::Id::ClockDiv)));
+	int clocks[sequencer::EdgeDetector::kMaxEdges];
+	int resets[sequencer::EdgeDetector::kMaxEdges];
+	const int n_clocks = g_clock_in.process(in, 2, n, invert, clocks);
+	const int n_resets = g_reset_in.process(in + 1, 2, n, invert, resets);
+	sequencer::ClockMonitor& mon = g_transport.clock;
+	mon.level[0] = g_clock_in.level();
+	mon.level[1] = g_reset_in.level();
+	mon.threshold[0] = g_clock_in.threshold();
+	mon.threshold[1] = g_reset_in.threshold();
+	mon.edges[0] = mon.edges[0] + static_cast<uint32_t>(n_clocks);
+	mon.edges[1] = mon.edges[1] + static_cast<uint32_t>(n_resets);
+
+	// Sequencer: whichever clock is selected says where a step started or
+	// its gate closed; the player turns that into notes (chords, ties).
 	const bool run = g_transport.run;
-	const sequencer::Sequencer::Event e =
-	    g_sequencer.process(run, g_params.get(params::Id::Tempo), n);
-	g_transport.step = g_sequencer.step();
+	const sequencer::Sequencer::Event e_ext = g_ext_clock.process(
+	    run && ext, clocks, n_clocks, resets, n_resets, div, n);
+	const float ext_bpm = g_ext_clock.bpm(div);
+	mon.bpm = ext_bpm;
+	// The external clock is only "there" while pulses arrive. Until then
+	// (nothing plugged in, or it stopped) the internal clock keeps running
+	// as the timing reference, so synced LFOs and the Tempo source lock to
+	// it - its steps only play notes when SRC = INT.
+	const bool ext_live = ext && ext_bpm > 0.0f;
+	const sequencer::Sequencer::Event e_int = g_sequencer.process(
+	    run && !ext_live, g_params.get(params::Id::Tempo), n);
+	const sequencer::Sequencer::Event e = ext ? e_ext : e_int;
+	g_transport.step = ext ? g_ext_clock.step() : g_sequencer.step();
+	if(ext_live)
+	{
+		g_patch.tempo_bpm = ext_bpm;  // synced LFOs and Tempo follow too
+	}
+	// Song position for the synced LFOs: the external clock's while it
+	// runs, else the internal one's (< 0 when stopped: they free-run at the
+	// synced rate).
+	g_patch.seq_pos =
+	    ext_live ? g_ext_clock.position() : g_sequencer.position();
+
 	sequencer::NoteEvent ev[sequencer::Player::kMaxEvents];
 	int count = 0;
 	int at = 0;
-	if(!run)
+	if(!run || src != g_clock_src)
 	{
+		// Stopped, or the clock source changed under a running pattern.
 		count = g_player.stop(ev);
 	}
 	else if(e.step >= 0)
@@ -169,6 +243,7 @@ void render_block(int16_t* out, int n)
 		count = g_player.on_event(g_pattern, e, ev);
 		at = e.gate_off;
 	}
+	g_clock_src = src;
 
 	// Render up to the event's frame, apply it, render the rest.
 	float buf[dsp::kBlockSize];
@@ -192,6 +267,9 @@ void render_block(int16_t* out, int n)
 		}
 	}
 	g_engine.render(g_patch, buf + at, n - at);
+	g_waves.set_live(g_engine.live_shape(0), g_engine.live_shape(1),
+	                 g_engine.live_mix(), g_engine.live_pw(0),
+	                 g_engine.live_pw(1));
 
 	for(int i = 0; i < n; ++i)
 	{
@@ -204,15 +282,16 @@ void render_block(int16_t* out, int n)
 // DMA callback, ISR context: render `frames` interleaved stereo frames into
 // `out`. Normally one half-buffer (kBlockSize frames), but audio_out::start()
 // pre-fills the whole double buffer in one call, so it is cut into blocks.
-void audio_callback(int16_t* out, uint32_t frames)
+void audio_callback(int16_t* out, const int16_t* in, uint32_t frames)
 {
 	const uint32_t start = cpu_load::begin();
 	while(frames > 0)
 	{
 		const uint32_t n =
 		    frames < audio_out::kBlockSize ? frames : audio_out::kBlockSize;
-		render_block(out, static_cast<int>(n));
+		render_block(out, in, static_cast<int>(n));
 		out += 2 * n;
+		in += 2 * n;
 		frames -= n;
 	}
 	cpu_load::end(start);

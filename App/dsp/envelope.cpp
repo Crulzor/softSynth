@@ -44,6 +44,5 @@ Envelope::Coeffs Envelope::Coeffs::from(float a, float d, float s, float r,
 	return c;
 }
 
-float Lfo::rate_hz(float r) { return 0.05f * std::pow(400.0f, clamp01(r)); }
 
 }  // namespace dsp

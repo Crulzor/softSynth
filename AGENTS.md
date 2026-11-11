@@ -45,11 +45,14 @@ kept current. This file is only the working context the docs can't express.
   not params: they are `params::WaveSlots` (per osc A/B spectra).
 
 ## Workflow rules
-- **Flash is tight** (Debug 121020 B = 92.3 % after the engine landed).
-  Debug builds `App/dsp/` engine files at `-O2 -ffp-contract=fast` (CPU) and
-  the HAL-free UI/model files at `-Og` (size) — `CMakeLists.txt`. A new
-  `.cpp` under `App/ui/` etc. should join that `-Og` list. Release (`-Os`)
-  is 79.7 KB.
+- **Flash is tight**: Debug 122668 B = 93.6 % with the UI / app / platform
+  C++ at `-Os` (was `-Og`: 97 %). Next lever: ship Release, or move the
+  framebuffer-free tables (fonts) / code to ITCM... measure first.
+  Debug builds the per-sample code (`App/dsp/` engine files,
+  `sequencer/ext_clock.cpp`) at `-O2 -ffp-contract=fast` (CPU) and the rest
+  of our C++ — UI, model, `app.cpp`, `platform/*.cpp` — at `-Os` (size); only
+  vendored / CubeMX code stays `-O0`. A new `.cpp` must join one of the two
+  lists in `CMakeLists.txt`. Release (`-Os`) is 86 KB.
 - DSP/params/ui/`display_draw` compile in **both** builds. Any change under
   `App/` that the host build compiles must keep the host build green:
   `cmake -S test -B test/build && cmake --build test/build &&
@@ -473,3 +476,106 @@ stretching while tracking a finger is the main suspect); each now costs
 one ~10 ms hiccup. If they turn out frequent in use, next steps: a longer
 timeout for the touch read only, or reading on the FT5336's INT pin (PG2)
 instead of polling.
+
+## Done: modular clock in on the audio input + 48 kHz fix (2026-11-11)
+
+Bart: "I want the mic in to function as an analogue clock sync for my
+modular stuff." The board's analogue input is the WM8994's **IN1** (ST's
+BSP calls it `AUDIO_IN_DEVICE_ANALOG_MIC` and configures it as
+`WM8994_IN_LINE1`, no mic bias), captured on **SAI2 Block B** (PG10,
+DMA2_Stream4) — the full-duplex path ARCHITECTURE.md had reserved.
+
+**What landed**
+- `platform/audio_out`: Block B synchronous slave RX, circular DMA, no IRQ;
+  `RenderFn(out, in, frames)`, the TX callback hands over the capture half
+  the RX DMA isn't writing. `audio_out::blocks()` counter.
+- **Sample-rate bug found and fixed**: the board ran at **46,876 Hz (41
+  cents flat, 2.3 % slow)** — the CubeMX `HAL_SAI_MspInit` re-selects PLL1Q
+  (48 MHz since USB) on every `HAL_SAI_Init`. Now MCKDIV is pinned (4) and
+  the mux goes back to PLL2 after the inits: measured **47,992.7 Hz**
+  (block counter vs host time over 30 s, SWD hotplug reads of
+  `audio_out::g_blocks`). This predates the engine — everything heard on
+  the board so far was flat.
+- `platform/codec`: IN1 line input on, then: input mixers 0 dB (ST: +30),
+  **output→input record path muted** (ST: 0 dB — the synth would leak into
+  the clock input), DRC off, GPIO1 to default, ADC volume 0 dB (ST derived
+  it from the output volume: ~-55 dB).
+- `sequencer/ext_clock`: `EdgeDetector` (adaptive threshold, hysteresis,
+  4 ms hold-off; works through AC coupling) + `ExtClock` (1/16, 1/8, 1/4,
+  24 / 48 PPQN; reset; arming; measured tempo; 2 s timeout). Params
+  `ClockSource` (INT / EXT+ / EXT-) and `ClockDiv`. `Transport::clock` is
+  the ISR → UI monitor (levels, thresholds, edge counts, bpm).
+- UI: **SYNC** tab (index 4; MIDI → 5, DBG → 6), `EnumButton` widget,
+  status strip compacted for 7 tabs and showing the external tempo.
+- Tests 110/110 (`test_ext_clock.cpp` — detector on AC-coupled, noisy,
+  weak, clipped and inverted pulse trains; clock modes).
+- On the board, nothing plugged in: both channels at the noise floor
+  (~-80 dBFS), no false edges. Idle CPU 3.3 % (the detector ~0.5 %).
+
+**Not verified (needs a cable)**: an actual modular clock into the jack —
+which physical jack Bart calls "mic in" is assumed to be the one ST wires
+to IN1; left/right assignment and polarity are unverified (if a clock only
+shows on R, or steps land on the gate's *fall*, swap / use EXT-). **Level**:
+the input is line level; tell Bart to attenuate 5–10 V gates to ~1 V —
+the board's input protection isn't verified.
+
+## Done: LFO shapes + FREE / SYNC (2026-11-11)
+
+Bart: "in the mod page, add basic shapes for the lfo, and a sync/free
+option". `dsp/lfo.{hpp,cpp}` (moved out of envelope.hpp): SIN, TRI, SAW
+(ramp up), SQR, S&H. **SYNC = tempo sync** (interpretation — not key
+retrigger; ask if he meant retrigger-on-note): LEN 4BAR … 1/32 with dotted /
+triplet values (`dsp::kLfoDivSteps`, names in params, a host test keeps the
+two lists the same length). While the pattern plays a synced LFO's phase is
+`song position / cycle length` — `Sequencer::position()` /
+`ExtClock::position()` (steps since play, fractional, not wrapped at 16;
+reset restarts it) — so it can't drift and restarts on the bar; stopped, it
+free-runs at the synced rate (internal tempo or the measured external one).
+The Tempo mod source locks to the beat the same way. Params: `Lfo{1,2}Shape`,
+`Lfo{1,2}Mode`, `Lfo{1,2}Div`. MOD page: rate knob cell swaps SPD ↔ LEN by
+mode (`ModPage::active()`), `ModPage::ShapeButton` draws the wave. Tests
+111/111. Flashed; idle CPU 3.4 %.
+Follow-up (same day): "if nothing is connected, it should just sync to the
+internal clock of the sequencer — in sync mode, not in free". `app.cpp`:
+the external clock counts as present only while pulses arrive
+(`ext_bpm > 0`); otherwise the internal `Sequencer` keeps running as the
+timing reference even with SRC = EXT (its steps play notes only with
+SRC = INT), and `Patch::seq_pos` / `tempo_bpm` come from it. Verified on
+the board over SWD: SRC = EXT+, nothing plugged in, play → `seq_pos`
+counts at 8 steps/s (120 BPM) while the pattern waits for pulses.
+
+## Done: WAVE scope follows SHP modulation (2026-11-11)
+
+Bart: "I don't see the shape changes reflected in the scope when I mod it
+with the lfo." The scope drew the SHP *knob*; modulation only existed per
+voice in the ISR. Now `Engine` computes `live_shape(osc)` / `live_mix()`
+each render (knob + routes, global sources + the newest sounding voice's
+ENV), `app.cpp` hands them to `WaveSlots::set_live()` (volatile, ISR
+writes), and `Scope` draws those when `WaveSlots::live()` (host: falls back
+to the knobs), redrawing on changes > 0.002. Verified on the board over
+SWD: with LFO1 -> SHP the reported shape sweeps 0 .. 0.93. Note: SHP only
+changes the picture / sound when slots A and B differ (WAV puts the same
+basic wave in both). Tests 113/113. Debug flash went to 97 %, so the
+non-DSP C++ moved from `-Og` to `-Os`: 93.6 %.
+
+## Done: PWM for every shape + per-oscillator mod destinations (2026-11-11)
+
+Bart asked whether PWM works for all shapes (answered: yes — the shifted-
+copy subtraction, a comb on any spectrum; a sine only changes level), then
+"go ahead", and mid-way: "mod dest per oscillator, I wanna be able to change
+both osc params independent from each other".
+- `AdditiveOsc::render_pw(a, d, harmonics, shape0, shape1, pw, ...)` picks
+  the path: pw 0 = `render()`; fade-in (first 10 % of the knob, W = 50 %)
+  = even harmonics scaled (1 − m)/(1 + m) through `render()` (keeps the
+  per-sample morph); full = one cosine sum around θ + πW with
+  `pwm_coeffs()` (morph per block there). A first version took sine +
+  cosine sums in the fade-in range: measured 84 % worst case → removed;
+  now ~60 % everywhere (57 % at full PW, 60 % off). Params `Osc{1,2}Pw`.
+- OSC page: PW knob replaces the OCT knob; OCT is a `Stepper` (− / +) as
+  the 4th cell of the WAV / A / B column (cells now 22 px). Scope draws PW
+  (time-domain shifted copy) from `WaveSlots::live_pw`.
+- Mod destinations: PIT/PT1/PT2, SHP/SH1/SH2, PW/PW1/PW2, MIX, AMP, CUT
+  (`dsp::ModDst` == `modulation::Dest`, static_asserts in app.cpp;
+  `dsp::sum_routes()` + `osc_mod()` shared by Voice and the live values).
+  Kept the "both" ones on purpose (one row of vibrato for both oscs).
+- Tests 120/120. Flash 95.2 %.
