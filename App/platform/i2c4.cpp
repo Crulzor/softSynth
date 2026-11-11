@@ -23,6 +23,56 @@ constexpr uint32_t kTimeoutMs = 10;
 
 I2C_HandleTypeDef g_i2c4{};
 
+// Read over SWD while debugging (non-halting): failed transfers, recoveries.
+volatile uint32_t g_errors = 0;
+volatile uint32_t g_recoveries = 0;
+volatile uint32_t g_last_error = 0;  // HAL_I2C_ERROR_* bits of the last failure
+
+// ~5 us at 480 MHz: half an SCL period of the bus-clear pulses (100 kHz).
+void bus_delay()
+{
+	for(volatile int i = 0; i < 600; ++i)
+	{
+	}
+}
+
+// Free the bus: reset the peripheral, then drive SCL by hand - nine pulses
+// make any slave that was mid-byte finish it and release SDA - and end with a
+// STOP (SDA low -> high while SCL is high). The pins go back to I2C when
+// init() runs again.
+void bus_clear()
+{
+	HAL_I2C_DeInit(&g_i2c4);
+	__HAL_RCC_I2C4_FORCE_RESET();
+	__HAL_RCC_I2C4_RELEASE_RESET();
+	g_i2c4.Instance = nullptr;
+
+	GPIO_InitTypeDef gpio{};
+	gpio.Pin = GPIO_PIN_12 | GPIO_PIN_13;  // PD12 = SCL, PD13 = SDA
+	gpio.Mode = GPIO_MODE_OUTPUT_OD;
+	gpio.Pull = GPIO_PULLUP;
+	gpio.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12 | GPIO_PIN_13, GPIO_PIN_SET);
+	HAL_GPIO_Init(GPIOD, &gpio);
+	bus_delay();
+	for(int i = 0; i < 9; ++i)
+	{
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+		bus_delay();
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+		bus_delay();
+	}
+	// STOP.
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+	bus_delay();
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+	bus_delay();
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+	bus_delay();
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+	bus_delay();
+}
+
 constexpr uint16_t reg_addr_size(uint16_t reg_size)
 {
 	return reg_size == 2 ? I2C_MEMADD_SIZE_16BIT : I2C_MEMADD_SIZE_8BIT;
@@ -69,19 +119,56 @@ bool init()
 	return true;
 }
 
+namespace
+{
+
+// After any failed transfer: count it, clear the bus and bring I2C4 back up,
+// so the next transfer starts from a clean peripheral and a free bus.
+bool fail()
+{
+	++g_errors;
+	g_last_error = HAL_I2C_GetError(&g_i2c4);
+	bus_clear();
+	if(init())
+	{
+		++g_recoveries;
+	}
+	return false;
+}
+
+}  // namespace
+
 bool read(uint16_t dev_addr, uint16_t reg, uint16_t reg_size, uint8_t* data,
           uint16_t len)
 {
-	return HAL_I2C_Mem_Read(&g_i2c4, dev_addr, reg, reg_addr_size(reg_size),
-	                        data, len, kTimeoutMs) == HAL_OK;
+	if(g_i2c4.Instance != I2C4 && !init())
+	{
+		return false;
+	}
+	if(HAL_I2C_Mem_Read(&g_i2c4, dev_addr, reg, reg_addr_size(reg_size), data,
+	                    len, kTimeoutMs) != HAL_OK)
+	{
+		return fail();
+	}
+	return true;
 }
 
 bool write(uint16_t dev_addr, uint16_t reg, uint16_t reg_size,
            const uint8_t* data, uint16_t len)
 {
-	return HAL_I2C_Mem_Write(&g_i2c4, dev_addr, reg, reg_addr_size(reg_size),
-	                         const_cast<uint8_t*>(data), len,
-	                         kTimeoutMs) == HAL_OK;
+	if(g_i2c4.Instance != I2C4 && !init())
+	{
+		return false;
+	}
+	if(HAL_I2C_Mem_Write(&g_i2c4, dev_addr, reg, reg_addr_size(reg_size),
+	                     const_cast<uint8_t*>(data), len, kTimeoutMs) != HAL_OK)
+	{
+		return fail();
+	}
+	return true;
 }
+
+uint32_t errors() { return g_errors; }
+uint32_t recoveries() { return g_recoveries; }
 
 }  // namespace i2c4

@@ -20,10 +20,21 @@ bool init();
 
 // Register read/write. `dev_addr` is the 8-bit (HAL-shifted) device address.
 // `reg_size` is 1 for an 8-bit register address (FT5336) or 2 for 16-bit
-// (WM8994). Returns false on bus error / NAK.
+// (WM8994). Returns false on bus error / NAK / timeout.
+//
+// A failed transfer is followed by a bus recovery (peripheral reset, nine
+// SCL pulses + STOP to free a slave holding SDA, re-init), so one glitch
+// can't leave the bus dead: without it, a single timeout left the HAL
+// handle mid-transfer and every later touch read timed out too - the UI
+// "froze" (stopped taking touch) while audio and drawing carried on.
 bool read(uint16_t dev_addr, uint16_t reg, uint16_t reg_size, uint8_t* data,
           uint16_t len);
 bool write(uint16_t dev_addr, uint16_t reg, uint16_t reg_size,
            const uint8_t* data, uint16_t len);
+
+// Failed transfers and bus recoveries since boot (for the debug read-out
+// and for reading over SWD).
+uint32_t errors();
+uint32_t recoveries();
 
 }  // namespace i2c4

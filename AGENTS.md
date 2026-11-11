@@ -450,3 +450,26 @@ CPU measured over SWD (write a pattern + `g_transport.run` with
    clip); may want a master volume param.
 3. kladblok's ImPlot scope shows the real output; the OSC page scope draws
    the shapes from the spectra instead (no audio tap yet).
+
+## Done: touch froze after a while — I2C4 bus recovery (2026-11-11)
+
+Report: "the board seems to get stuck after touching the mix slider". Not a
+hang: audio and the UI loop kept running, but every touch read timed out
+(I2C4 handle `ErrorCode = HAL_I2C_ERROR_TIMEOUT`, PC samples ~25 % inside
+`I2C_IsErrorOccurred`). Cause: `i2c4::read/write` never recovered from a
+failed transfer — after **one** timeout the HAL handle / bus stayed
+mid-transfer and every later read failed, so touch was dead until reset.
+Fix (`App/platform/i2c4.cpp`): on any failure, `HAL_I2C_DeInit` + RCC
+reset of I2C4, nine hand-clocked SCL pulses + a STOP on PD12/PD13 (frees a
+slave holding SDA), then `init()` again. Counters `g_errors`,
+`g_recoveries`, `g_last_error` (non-halting SWD read: `nm` for the
+addresses).
+Measured: **each SWD hotplug connect (`STM32_Programmer_CLI mode=HOTPLUG`)
+provokes about one touch-read timeout** — so debugging over SWD will show
+errors; that's the tool, not the firmware. Untouched for 60 s with no SWD:
+zero. The timeout that froze the MIX drag happened without SWD, so real
+ones are rare but exist (root cause not pinned down — FT5336 clock
+stretching while tracking a finger is the main suspect); each now costs
+one ~10 ms hiccup. If they turn out frequent in use, next steps: a longer
+timeout for the touch read only, or reading on the FT5336's INT pin (PG2)
+instead of polling.
