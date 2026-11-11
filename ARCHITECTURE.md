@@ -454,17 +454,42 @@ until release.
 ### The pages and the tab bar
 
 The screen is 480×246 for the active page plus a 26 px tab bar along the
-bottom. Five tabs — **OSC, ENV, MOD, SEQ, DBG** — the active one accent-filled;
-a press on the bar's tab zone switches page. The bar's right side carries a
-status readout (`Ui::set_status`, e.g. an init failure) and the transport dot,
-lit while `Transport::run` is set, so both are visible on every page.
+bottom. Six tabs — **OSC, ENV, MOD, SEQ, MIDI, DBG** — 48 px each, the active
+one filled with its page's accent; a press on the bar's tab zone switches
+page. The **MIDI** tab carries a small LED in its corner: off with nothing on
+CN13, amber while enumerating, green when the MIDI class is running (flashing
+white for 60 ms on each packet), red for a device without a MIDI interface.
+
+Right of the tabs is a **status strip**, visible on every page: a play
+triangle (SEQ accent) or stop square, the tempo, a 16-pip step row (beat pips
+taller, on-steps lighter, the playing step in the SEQ accent) and the
+audio-interrupt load as `CPU nn%` (red from 80 %). A status message
+(`Ui::set_status`, e.g. an init failure) replaces the strip, in red, while
+set. The bar redraws every frame (it is invalidated each frame anyway).
+
+### Look
+
+Black page background, `kPanel` grey cells with rounded corners, and **one
+accent per section** (`theme.hpp`): OSC orange, FILTER cyan, ENV green, MOD
+violet, SEQ amber, MIDI pink. A widget draws its value / "on" state in its
+own accent (`Widget::set_accent`, set by the page's constructor; the default
+is orange, which is what the DBG page's mix of widgets uses). Pages head
+their sections with `draw_section()` — the label in the accent and a thin
+darker rule out to the section's width — instead of grey title bars. Knob
+rings are anti-aliased against the cell colour (`theme::mix`), and the last
+few pixels of lit arc are drawn bright as the value pointer.
 
 ### The OSC page
 
-Two rows, **OS1** / **OS2**, each with PIT / SHP / OCT knobs; the **MIX**
-crossfader spans both rows (top = osc 1, bottom = osc 2). Right of the
-separator, the filter's **CUT** / **RES** knobs — stored in the parameter set,
-inert until the filter DSP lands.
+Full-page, on one 76×100 cell grid of **large** knobs (`set_large(true)`:
+a 52 px ring, a knob cap with an anti-aliased pointer, the value at scale 2):
+rows **OSC 1** / **OSC 2**, each with PIT / SHP / OCT; the **MIX** crossfader
+in its own column spanning both rows (top = osc 1, bottom = osc 2); on the
+right, **FILTER** CUT and RES side by side on row 1, in the filter's cyan —
+stored in the parameter set, inert until the filter DSP lands — and under
+them the **WAVE** slot (160×100, `Scope` widget) for the oscilloscope: for
+now an empty graticule with a flat trace, waiting for a sample source from
+the audio side.
 
 ### The ENV page
 
@@ -495,7 +520,8 @@ header shows the audio-interrupt load as `CPU avg/peak%`.
 
 ### Widget behaviour
 
-- **Knobs** (Elektron-style: arc, value, label) use *relative* drag: right or
+- **Knobs** (Elektron-style: arc, value, label; compact 36×44 or large
+  84×100) use *relative* drag: right or
   up increases, ~160 px for a full sweep or 14 px per step for stepped values.
   Nothing jumps on touch-down. Bipolar values fill from 12 o'clock.
 - **Cycle buttons** tap-cycle through their names (the matrix's sources and

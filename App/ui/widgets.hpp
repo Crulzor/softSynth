@@ -23,6 +23,7 @@
 #include "params/parameters.hpp"
 #include "sequencer/pattern.hpp"
 #include "sequencer/sequencer.hpp"
+#include "ui/theme.hpp"
 
 namespace ui
 {
@@ -47,6 +48,12 @@ void format_value(const params::Spec& spec, float value, char* out);
 // MIDI note name: 60 -> "C4", 61 -> "C#4". `out` needs 5 chars.
 void format_note(std::uint8_t note, char* out);
 
+// Section heading in place of a grey title bar: `label` in the section's
+// accent at (x, y), then a thin rule in a darker shade of it out to x + w.
+// 8 px tall, drawn on the page background.
+void draw_section(int x, int y, int w, const char* label,
+                  display::Color accent);
+
 // Decimal integer, "-" for negatives, "+" for positives if `force_sign`.
 // Returns the pointer to the terminating NUL (for appending).
 char* format_int(int v, char* out, bool force_sign = false);
@@ -70,6 +77,10 @@ public:
 
 	virtual void invalidate() { dirty_ = true; }
 
+	// The colour this widget draws its value / "on" state in. Pages set it
+	// to their section accent at construction.
+	void set_accent(display::Color c) { accent_ = c; }
+
 	void draw_if_dirty()
 	{
 		if(dirty_)
@@ -87,6 +98,7 @@ protected:
 	virtual void draw() = 0;
 
 	Rect rect_;
+	display::Color accent_ = theme::kAccent;
 	bool dirty_ = true;
 };
 
@@ -106,7 +118,12 @@ public:
 	void drag(int x, int y, std::uint32_t now_ms) override;
 	void release(std::uint32_t now_ms) override;
 
-protected:
+	// Large style: a big knob with a cap and pointer (or a tall fader) and
+	// the value at scale 2, for full-page layouts. Needs a cell of about
+	// 84 x 100. The default compact style fits a 36 x 44 cell.
+	void set_large(bool large) { large_ = large; }
+
+   protected:
 	// Signed travel in pixels for a drag of (dx, dy) from the press point;
 	// positive increases the value.
 	virtual int travel(int dx, int dy) const = 0;
@@ -115,8 +132,9 @@ protected:
 	params::Id id_;
 	float shown_ = 0.0f;  // value at the last draw
 	bool active_ = false;
+	bool large_ = false;
 
-private:
+   private:
 	int x0_ = 0;
 	int y0_ = 0;
 	float n0_ = 0.0f;  // normalized value at press
@@ -354,17 +372,28 @@ private:
 	int octave_ = 4;
 };
 
-// Bottom tab bar: one button per page, the active page's button accent-filled,
-// a status message and the transport dot at the right edge.
+// Bottom tab bar: one button per page, the active page's button filled with
+// that page's accent. Any tab can carry a badge dot (the MIDI tab's link
+// LED). The space right of the tabs is a status strip: transport icon, BPM,
+// a 16-pip step row (pattern on-steps lit, the playhead in the SEQ accent)
+// and the audio CPU load. A status message (an init failure) replaces the
+// strip while set.
 class TabBar : public Widget
 {
 public:
-	TabBar(Rect r, int num_tabs, const char* const* tab_names,
-	       const sequencer::Transport& transport)
-	    : Widget(r), num_tabs_(num_tabs), tab_names_(tab_names),
-	      transport_(transport)
-	{
-	}
+ TabBar(Rect r, int num_tabs, const char* const* tab_names,
+	    const display::Color* tab_accents,
+	    const sequencer::Transport& transport,
+	    const sequencer::Pattern& pattern, const params::Parameters& params)
+	 : Widget(r),
+	   num_tabs_(num_tabs),
+	   tab_names_(tab_names),
+	   tab_accents_(tab_accents),
+	   transport_(transport),
+	   pattern_(pattern),
+	   params_(params)
+ {
+ }
 
 	int active() const { return active_; }
 	void set_active(int i) { active_ = i; }
@@ -375,6 +404,23 @@ public:
 	// Short message shown at the right (e.g. an init failure); nullptr clears.
 	void set_status(const char* text) { status_ = text; }
 
+	// Average audio-interrupt load, 0..1, for the strip.
+	void set_cpu_load(float average)
+	{
+		cpu_pct_ = static_cast<int>(average * 100.0f + 0.5f);
+	}
+
+	// Badge dot on tab `i` in `c`; `on` = false hides it.
+	void set_badge(int i, bool on, display::Color c)
+	{
+		badge_tab_ = i;
+		badge_on_ = on;
+		badge_ = c;
+	}
+
+	// For tests: the x where the status strip begins.
+	int strip_x() const { return rect_.x + num_tabs_ * kTabW; }
+
 	void sync() override;
 	void press(int x, int y, std::uint32_t now_ms) override;
 
@@ -383,23 +429,38 @@ protected:
 
 private:
 	static constexpr int kTabW = 48;
-	static constexpr int kDot = 6;
 
 	Rect tab(int i) const;
 	int tab_at(int x, int y) const;
+	void draw_strip();
 
 	int num_tabs_;
 	const char* const* tab_names_;
+	const display::Color* tab_accents_;
 	const sequencer::Transport& transport_;
+	const sequencer::Pattern& pattern_;
+	const params::Parameters& params_;
 	int active_ = 0;
 	const char* status_ = nullptr;
 	int switch_ = -1;
+	int cpu_pct_ = 0;
+	int badge_tab_ = -1;
+	bool badge_on_ = false;
+	display::Color badge_{0, 0, 0};
+};
 
-	// What the last draw showed, for sync().
-	int shown_active_ = -1;
-	const char* shown_status_ = nullptr;
-	bool shown_run_ = false;
-	int shown_step_ = -1;
+// Oscilloscope slot: a panel cell with a graticule (quarter divisions, a
+// brighter zero line) and the trace in the widget's accent. Display only, no
+// touch. For now there is no sample source, so the trace is the flat zero
+// line; the source (a snapshot of the oscillator output handed from the
+// audio side) gets wired in here once the real oscillator lands.
+class Scope : public Widget
+{
+   public:
+	explicit Scope(Rect r) : Widget(r) {}
+
+   protected:
+	void draw() override;
 };
 
 // Tap to cycle an enum value one step (wrapping); shows the current entry's

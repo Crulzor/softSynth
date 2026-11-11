@@ -57,9 +57,10 @@ std::uint64_t curve_sum()
 // draw. Anything more means strokes from earlier states are still on screen.
 int accent_count()
 {
-	const std::uint16_t accent = static_cast<std::uint16_t>(
-	    ((ui::theme::kAccent.r & 0xF8) << 8) |
-	    ((ui::theme::kAccent.g & 0xFC) << 3) | (ui::theme::kAccent.b >> 3));
+	const std::uint16_t accent =
+	    static_cast<std::uint16_t>(((ui::theme::kEnvAccent.r & 0xF8) << 8) |
+		                           ((ui::theme::kEnvAccent.g & 0xFC) << 3) |
+		                           (ui::theme::kEnvAccent.b >> 3));
 	int n = 0;
 	for(int y = kCurveY; y < kCurveY + kCurveH; ++y)
 	{
@@ -569,9 +570,10 @@ TEST_CASE("the ENV curve leaves no stroke outside its rect")
 	Rig r;
 	r.tap(72, 259);  // ENV tab
 
-	const std::uint16_t accent = static_cast<std::uint16_t>(
-	    ((ui::theme::kAccent.r & 0xF8) << 8) |
-	    ((ui::theme::kAccent.g & 0xFC) << 3) | (ui::theme::kAccent.b >> 3));
+	const std::uint16_t accent =
+	    static_cast<std::uint16_t>(((ui::theme::kEnvAccent.r & 0xF8) << 8) |
+		                           ((ui::theme::kEnvAccent.g & 0xFC) << 3) |
+		                           (ui::theme::kEnvAccent.b >> 3));
 
 	// With release = 0 the release stage collapses to a vertical line at the
 	// curve's right edge.
@@ -627,16 +629,109 @@ TEST_CASE("the OSC page edits the oscillator parameters")
 {
 	Rig r;
 	r.tap(24, 259);  // OSC tab
-	const int x = 66;  // the SHP cell of row 1
-	r.frame(true, x, 45);
+	// Mirrors osc_page.cpp: 76 x 100 cells at x = 8 + col * 84, rows from
+	// y = 16 and y = 138; the mix fader at x 260..303; CUT / RES at x 312 /
+	// 396 on row 1, the scope under them on row 2.
+	const int x = 140;  // the SHP cell of row 1
+	r.frame(true, x, 60);
 	CHECK(r.params.get(Id::Osc1Shape) == 0.0f);
-	r.frame(true, x, 25);  // 20 px up
+	r.frame(true, x, 40);  // 20 px up
 	CHECK(r.params.get(Id::Osc1Shape) > 0.0f);
 	r.frame(false);
 
+	// Row 2 is osc 2.
+	r.frame(true, 50, 180);
+	r.frame(true, 50, 152);  // up two steps
+	CHECK(r.params.get(Id::Osc2Pitch) == 2.0f);
+	r.frame(false);
+
 	// The mix fader spans both rows: dragging down moves towards osc 2.
-	r.frame(true, 140, 30);
-	r.frame(true, 140, 60);
+	r.frame(true, 282, 60);
+	r.frame(true, 282, 120);
 	CHECK(r.params.get(Id::OscMix) > 0.5f);
 	r.frame(false);
+
+	// Filter: cutoff and resonance side by side on row 1.
+	const float res = r.params.get(Id::FilterResonance);
+	r.frame(true, 434, 60);
+	r.frame(true, 434, 40);
+	CHECK(r.params.get(Id::FilterResonance) > res);
+	r.frame(false);
+
+	// The scope below them is display-only: dragging on it changes nothing.
+	const float cut = r.params.get(Id::FilterCutoff);
+	r.frame(true, 390, 190);
+	r.frame(true, 390, 150);
+	r.frame(false);
+	CHECK(r.params.get(Id::FilterCutoff) == cut);
+	CHECK(r.params.get(Id::FilterResonance) > res);
+}
+
+TEST_CASE("the active tab is filled with its page's accent")
+{
+	Rig r;
+	const auto at = [](int x, int y)
+	{
+		return display::detail::g_framebuffer[static_cast<std::uint32_t>(y) *
+		                                          display::kWidth +
+		                                      x];
+	};
+	const auto rgb565 = [](display::Color c)
+	{
+		return static_cast<std::uint16_t>(((c.r & 0xF8) << 8) |
+		                                  ((c.g & 0xFC) << 3) | (c.b >> 3));
+	};
+	for(int i = 0; i < ui::kNumPages; ++i)
+	{
+		r.tap(24 + 48 * i, 259);
+		REQUIRE(r.ui.page() == i);
+		CHECK(at(48 * i + 2, 250) == rgb565(ui::kPageAccents[i]));
+	}
+}
+
+TEST_CASE("the MIDI tab's LED follows the link and flashes on packets")
+{
+	Rig r;
+	const auto led = []
+	{
+		// Centre of the badge in the MIDI tab's top-right corner.
+		return display::detail::g_framebuffer[static_cast<std::uint32_t>(246 +
+		                                                                 5) *
+		                                          display::kWidth +
+		                                      ui::kMidiTab * 48 + 48 - 7];
+	};
+	const auto rgb565 = [](display::Color c)
+	{
+		return static_cast<std::uint16_t>(((c.r & 0xF8) << 8) |
+		                                  ((c.g & 0xFC) << 3) | (c.b >> 3));
+	};
+	r.frame(false);
+	CHECK(led() == rgb565(ui::theme::kPanel));  // no device: no LED
+
+	midi::Link link;
+	link.state = midi::LinkState::Enumerating;
+	r.ui.set_usb_link(link);
+	r.frame(false);
+	CHECK(led() == rgb565(ui::theme::kBusy));
+
+	link.state = midi::LinkState::Ready;
+	r.ui.set_usb_link(link);
+	r.frame(false);
+	CHECK(led() == rgb565(ui::theme::kOk));
+
+	const std::uint8_t clock[4] = {0x0F, 0xF8, 0, 0};  // a MIDI clock tick
+	midi::parser().on_packet(clock, 4);
+	r.frame(false);
+	CHECK(led() == rgb565(ui::theme::kText));  // flash
+	for(int i = 0; i < 5; ++i)
+	{
+		r.frame(false);
+	}
+	CHECK(led() == rgb565(ui::theme::kOk));  // and back
+
+	link.state = midi::LinkState::NotMidi;
+	r.ui.set_usb_link(link);
+	r.frame(false);
+	CHECK(led() == rgb565(ui::theme::kWarn));
+	r.ui.set_usb_link(midi::Link{});
 }

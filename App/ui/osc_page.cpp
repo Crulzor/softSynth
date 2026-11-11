@@ -12,46 +12,37 @@ namespace
 using params::Id;
 
 // --- Layout (kPageW x kPageH) ------------------------------------------------
-// Left of the separator: the two oscillator rows in the debug page's cell
-// geometry, with the mix fader spanning both rows in a fourth column. Right:
-// the filter's two knobs, centred in the remaining space.
-constexpr int kTagW = 11;
-constexpr int kCellW = 36;
-constexpr int kCellPitch = 37;
-constexpr int kCellH = 44;
-constexpr int kHeaderH = 11;
+// Two rows on one 76 x 100 cell grid, columns under coloured section rules:
+//   OSC 1 / OSC 2  two rows of large knobs (pitch, shape, octave)
+//   MIX            the crossfader, spanning both rows (top = osc 1)
+//   FILTER         row 1 on the right: cutoff and resonance side by side, in
+//                  the filter's own accent
+//   WAVE           row 2 on the right: the oscilloscope slot (two cells wide)
+constexpr int kCellW = 76;
+constexpr int kCellH = 100;
+constexpr int kGap = 8;
+constexpr int kColPitch = kCellW + kGap;  // 84
+constexpr int kMarginX = 8;
 
-constexpr int kRowY[2] = {12, 56};
+constexpr int kRuleY[2] = {4, 126};  // section rules; cells start 12 below
+constexpr int kRowY[2] = {kRuleY[0] + 12, kRuleY[1] + 12};
+
+constexpr int kOscW = 3 * kCellW + 2 * kGap;  // 244
 
 constexpr Rect cell(int col, int row)
 {
-	return Rect{kTagW + col * kCellPitch, kRowY[row], kCellW, kCellH};
+	return Rect{kMarginX + col * kColPitch, kRowY[row], kCellW, kCellH};
 }
 
-constexpr int kDivX = 159;  // full-height separator line
-constexpr Rect kMix{kTagW + 3 * kCellPitch, kRowY[0], kCellW, 2 * kCellH};
+constexpr int kMixX = kMarginX + kOscW + kGap;  // 260
+constexpr int kMixW = 44;
+constexpr Rect kMix{kMixX, kRowY[0], kMixW, kRowY[1] + kCellH - kRowY[0]};
 
-constexpr Rect kCutoff{231, kRowY[0], 64, kCellH};
-constexpr Rect kResonance{343, kRowY[0], 64, kCellH};
-
-// Row tags, drawn as stacked letters.
-struct RowTag
-{
-	const char* text;
-	int y;
-};
-constexpr RowTag kRowTags[] = {{"OS1", kRowY[0]}, {"OS2", kRowY[1]}};
-
-void draw_row_tag(const RowTag& tag)
-{
-	const int top = tag.y + (kCellH - 26) / 2;
-	char ch[2] = {0, 0};
-	for(int i = 0; tag.text[i] != '\0'; ++i)
-	{
-		ch[0] = tag.text[i];
-		display::draw_text(2, top + i * 9, ch, theme::kDim);
-	}
-}
+constexpr int kRightX = kMixX + kMixW + kGap;  // 312
+constexpr int kRightW = 2 * kCellW + kGap;     // 160, to x = 472
+constexpr Rect kCutoff{kRightX, kRowY[0], kCellW, kCellH};
+constexpr Rect kResonance{kRightX + kColPitch, kRowY[0], kCellW, kCellH};
+constexpr Rect kScope{kRightX, kRowY[1], kRightW, kCellH};
 
 }  // namespace
 
@@ -66,31 +57,38 @@ OscPage::OscPage(Ctx ctx)
       },
       mix_(kMix, ctx.params, Id::OscMix),
       cutoff_(kCutoff, ctx.params, Id::FilterCutoff),
-      resonance_(kResonance, ctx.params, Id::FilterResonance)
+      resonance_(kResonance, ctx.params, Id::FilterResonance),
+      scope_(kScope)
 {
 	int n = 0;
 	for(Knob& k : knobs_)
 	{
+		k.set_large(true);
+		k.set_accent(theme::kOscAccent);
 		widgets_[n++] = &k;
 	}
+	mix_.set_large(true);
+	mix_.set_accent(theme::kOscAccent);
 	widgets_[n++] = &mix_;
-	widgets_[n++] = &cutoff_;
-	widgets_[n++] = &resonance_;
+	Knob* filter[] = {&cutoff_, &resonance_};
+	for(Knob* k : filter)
+	{
+		k->set_large(true);
+		k->set_accent(theme::kFilAccent);
+		widgets_[n++] = k;
+	}
+	scope_.set_accent(theme::kOscAccent);
+	widgets_[n++] = &scope_;
 }
 
 void OscPage::redraw_all()
 {
 	display::fill(theme::kBackground);
-	display::fill_rect(0, 0, kDivX, kHeaderH, theme::kHeader);
-	display::draw_text(3, 2, "OSC", theme::kText);
-	display::fill_rect(kDivX + 1, 0, kPageW - kDivX - 1, kHeaderH,
-	                  theme::kHeader);
-	display::draw_text(kDivX + 4, 2, "FIL", theme::kText);
-	display::fill_rect(kDivX, 0, 1, kPageH, theme::kHeader);
-	for(const RowTag& tag : kRowTags)
-	{
-		draw_row_tag(tag);
-	}
+	draw_section(kMarginX, kRuleY[0], kOscW, "OSC 1", theme::kOscAccent);
+	draw_section(kMarginX, kRuleY[1], kOscW, "OSC 2", theme::kOscAccent);
+	draw_section(kMixX, kRuleY[0], kMixW, "MIX", theme::kOscAccent);
+	draw_section(kRightX, kRuleY[0], kRightW, "FILTER", theme::kFilAccent);
+	draw_section(kRightX, kRuleY[1], kRightW, "WAVE", theme::kOscAccent);
 	for(Widget* w : widgets_)
 	{
 		w->invalidate();

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "ui/ui.hpp"
 
+#include "midi/midi.hpp"
+
 namespace ui
 {
 
@@ -14,7 +16,7 @@ Ui::Ui(params::Parameters& params, sequencer::Pattern& pattern,
       midi_(ctx_),
       dbg_(ctx_),
       bar_(Rect{0, kPageH, kPageW, kTabBarH}, kNumPages, kPageNames,
-           transport)
+	       kPageAccents, transport, pattern, params)
 {
 	pages_[0] = &osc_;
 	pages_[1] = &env_;
@@ -22,6 +24,38 @@ Ui::Ui(params::Parameters& params, sequencer::Pattern& pattern,
 	pages_[3] = &seq_;
 	pages_[4] = &midi_;
 	pages_[5] = &dbg_;
+}
+
+// The MIDI tab's LED: off with nothing attached, amber while enumerating,
+// green once the MIDI class runs (flashing white as packets arrive), red for
+// a device without a MIDI interface.
+void Ui::update_midi_led(std::uint32_t now_ms)
+{
+	const std::uint32_t packets =
+	    midi::parser().packets.load(std::memory_order_relaxed);
+	if(packets != seen_packets_)
+	{
+		seen_packets_ = packets;
+		flash_until_ = now_ms + kMidiFlashMs;
+	}
+	switch(link_)
+	{
+		case midi::LinkState::NoDevice:
+			bar_.set_badge(kMidiTab, false, theme::kTrack);
+			break;
+		case midi::LinkState::Enumerating:
+			bar_.set_badge(kMidiTab, true, theme::kBusy);
+			break;
+		case midi::LinkState::Ready:
+			bar_.set_badge(kMidiTab, true,
+			               static_cast<std::int32_t>(flash_until_ - now_ms) > 0
+			                   ? theme::kText
+							   : theme::kOk);
+			break;
+		case midi::LinkState::NotMidi:
+			bar_.set_badge(kMidiTab, true, theme::kWarn);
+			break;
+	}
 }
 
 void Ui::switch_page(int i)
@@ -78,6 +112,7 @@ void Ui::update(const Touch& touch, std::uint32_t now_ms)
 	was_pressed_ = touch.pressed;
 
 	// The page may have redrawn over the bar; the bar always draws last.
+	update_midi_led(now_ms);
 	bar_.invalidate();
 	bar_.sync();
 	pages_[page_]->update(now_ms);

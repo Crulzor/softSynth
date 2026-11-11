@@ -157,6 +157,31 @@ flip path. Regression `the ENV curve leaves no stroke outside its rect`
 (verified red: 88 failed assertions = the stuck line in the right column +
 bottom row). Suite 37/37; confirmed on hardware 2026-11-05.
 
+## Done: UI look pass — OSC re-layout, section accents, status strip (2026-11-11)
+
+Bart picked suggestions 1, 2 and 4 from a list of UI improvements; 3 (a bigger
+1-bit font, ~2–3 KB flash), 5 (MOD as a routing list with bipolar amount
+bars, LFO shape preview) and 6 (ENV gradient/handles, SEQ cells without the
+X) are still on the table.
+- **OSC page** re-laid out full-page with large knobs (`ParamControl::
+  set_large`) — see ARCHITECTURE.md §11. Bart then asked for room for the
+  wave shape: cells went 84→76 px wide so CUT/RES sit side by side and the
+  bottom-right 160×100 is a **WAVE** slot (`ui::Scope`, empty graticule +
+  flat trace). The oscilloscope itself is still to do — it needs a sample
+  snapshot handed from the audio side (ISR writes, UI reads; no blocking),
+  best designed together with Bart's oscillator.
+- **Per-section accents** (`theme.hpp`, `Widget::set_accent`,
+  `kPageAccents` in `page.hpp`), `draw_section()` rules instead of grey
+  title bars on OSC/ENV/MOD/MIDI. DBG keeps its old headers (CPU / MHz).
+- **Status strip** in the tab bar (transport, BPM, step pips, CPU %) and the
+  **MIDI tab LED** (`Ui::update_midi_led`). `Ui::set_cpu_load` now also
+  feeds the bar.
+- Anti-aliased knob rings / caps (pointer drawn per pixel via the existing
+  `atan2`, so no `cosf` link). Flash 113460 B (86.6 %, +4.4 KB).
+- Tests 54/54: OSC test re-pointed at the new grid; ENV stroke tests count
+  `kEnvAccent` (they would pass vacuously on orange); new tests for the tab
+  accent fill and the MIDI LED states/flash. Flashed 2026-11-11.
+
 ## Done: USB-MIDI host on CN13 (BeatStep Pro) — vendor ST USBH (2026-11-10)
 
 **Goal**: USB-MIDI input. Board = USB **host only** on CN13 (OTG_FS); a BeatStep

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 //
-// The OSC page: both oscillator rows (pitch / shape / octave) with the mix
-// crossfader on the left, the filter's Cutoff + Resonance on the right. The
-// filter parameters are inert until the filter DSP lands.
+// The OSC page: both oscillator rows (pitch / shape / octave) as large
+// knobs, the mix crossfader spanning them; on the right the filter's Cutoff +
+// Resonance (in the filter's accent) over the WAVE oscilloscope slot. The
+// filter parameters are inert until the filter DSP lands; the scope is an
+// empty frame until it gets a sample source.
 #pragma once
 
 #include "ui/page.hpp"
@@ -23,17 +25,18 @@ public:
 	void update(std::uint32_t now_ms) override;
 
 private:
-	static constexpr int kWidgets = 9;
+ static constexpr int kWidgets = 10;
 
-	Widget* hit(int x, int y);
+ Widget* hit(int x, int y);
 
-	Knob knobs_[6];  // Osc1/2 x {Pitch, Shape, Octave}
-	CrossFader mix_;
-	Knob cutoff_;
-	Knob resonance_;
+ Knob knobs_[6];  // Osc1/2 x {Pitch, Shape, Octave}
+ CrossFader mix_;
+ Knob cutoff_;
+ Knob resonance_;
+ Scope scope_;
 
-	Widget* widgets_[kWidgets];
-	Widget* captured_ = nullptr;
+ Widget* widgets_[kWidgets];
+ Widget* captured_ = nullptr;
 };
 
 }  // namespace ui

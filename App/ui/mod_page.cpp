@@ -16,8 +16,6 @@ using params::Id;
 // The matrix as two columns of three 44 px rows: per row, a CycleButton for
 // the source, one for the destination, and a knob for the amount. The two
 // LFO rate knobs ride in the strip below.
-constexpr int kHeaderH = 11;
-
 constexpr int kRowH = 44;
 constexpr int kRowPitch = 48;
 constexpr int kRowY0 = 14;
@@ -117,14 +115,17 @@ ModPage::ModPage(Ctx ctx)
 	}
 	widgets_[n++] = &lfo1_;
 	widgets_[n++] = &lfo2_;
+	for(Widget* w : widgets_)
+	{
+		w->set_accent(theme::kModAccent);
+	}
 }
 
 void ModPage::redraw_all()
 {
 	display::fill(theme::kBackground);
-	display::fill_rect(0, 0, kPageW, kHeaderH, theme::kHeader);
-	display::draw_text(3, 2, "MOD", theme::kText);
-	display::fill_rect(0, kSepY, kPageW, 1, theme::kHeader);
+	draw_section(8, 2, kPageW - 16, "MATRIX", theme::kModAccent);
+	draw_section(8, kSepY, kPageW - 16, "LFO", theme::kModAccent);
 	draw_row_tag(2, kLfoY, "LF1");
 	draw_row_tag(84, kLfoY, "LF2");
 	for(Widget* w : widgets_)

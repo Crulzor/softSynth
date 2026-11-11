@@ -61,10 +61,16 @@ public:
 	void set_cpu_load(float average, float peak)
 	{
 		dbg_.set_cpu_load(average, peak);
+		bar_.set_cpu_load(average);
 	}
 
-	// USB-MIDI link state for the MIDI page (from usbhost::link()).
-	void set_usb_link(const midi::Link& link) { midi_.set_link(link); }
+	// USB-MIDI link state for the MIDI page and the MIDI tab's LED (from
+	// usbhost::link()).
+	void set_usb_link(const midi::Link& link)
+	{
+		link_ = link.state;
+		midi_.set_link(link);
+	}
 
 	// For tests.
 	int page() const { return page_; }
@@ -73,27 +79,35 @@ public:
 	const DebugPage& dbg() const { return dbg_; }
 
 private:
-	void switch_page(int i);
+ // How long the MIDI LED flashes white after a packet arrives.
+ static constexpr std::uint32_t kMidiFlashMs = 60;
 
-	Ctx ctx_;
-	OscPage osc_;
-	EnvPage env_;
-	ModPage mod_;
-	SeqPage seq_;
-	MidiPage midi_;
-	DebugPage dbg_;
-	TabBar bar_;
+ void switch_page(int i);
+ void update_midi_led(std::uint32_t now_ms);
 
-	Page* pages_[kNumPages];
-	int page_ = 0;
-	bool was_pressed_ = false;
-	// The last full-frame draw (a page switch or redraw_all()) landed in the
-	// back buffer; the other buffer still holds the previous page until the
-	// frame-start swap promotes the fresh one. While set, the next update()
-	// repaints the whole current page first, so that frame's partial redraws
-	// (tab bar, dirty widgets) land on a complete frame of the current page
-	// instead of mixing it with the old one.
-	bool needs_full_ = false;
+ Ctx ctx_;
+ OscPage osc_;
+ EnvPage env_;
+ ModPage mod_;
+ SeqPage seq_;
+ MidiPage midi_;
+ DebugPage dbg_;
+ TabBar bar_;
+
+ Page* pages_[kNumPages];
+ int page_ = 0;
+ bool was_pressed_ = false;
+ // The last full-frame draw (a page switch or redraw_all()) landed in the
+ // back buffer; the other buffer still holds the previous page until the
+ // frame-start swap promotes the fresh one. While set, the next update()
+ // repaints the whole current page first, so that frame's partial redraws
+ // (tab bar, dirty widgets) land on a complete frame of the current page
+ // instead of mixing it with the old one.
+ bool needs_full_ = false;
+
+ midi::LinkState link_ = midi::LinkState::NoDevice;
+ std::uint32_t seen_packets_ = 0;
+ std::uint32_t flash_until_ = 0;
 };
 
 }  // namespace ui

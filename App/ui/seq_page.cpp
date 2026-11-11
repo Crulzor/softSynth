@@ -29,6 +29,11 @@ SeqPage::SeqPage(Ctx ctx)
 	widgets_[1] = &play_;
 	widgets_[2] = &grid_;
 	widgets_[3] = &note_box_;
+	for(Widget* w : widgets_)
+	{
+		w->set_accent(theme::kSeqAccent);
+	}
+	picker_.set_accent(theme::kSeqAccent);
 }
 
 void SeqPage::redraw_all()

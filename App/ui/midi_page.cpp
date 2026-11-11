@@ -12,7 +12,6 @@ namespace
 {
 
 // --- Layout (480 x kPageH) ---------------------------------------------------
-constexpr int kHeaderH = 11;
 constexpr int kUsbHeaderY = 0;
 constexpr Rect kStateRow{0, 15, kPageW, 16};    // scale 2
 constexpr Rect kDeviceRow{0, 36, kPageW, 10};
@@ -26,8 +25,8 @@ constexpr int kMargin = 8;
 
 void draw_header(int y, const char* title)
 {
-	display::fill_rect(0, y, kPageW, kHeaderH, theme::kHeader);
-	display::draw_text(3, y + 2, title, theme::kText);
+	draw_section(kMargin, y + 2, kPageW - 2 * kMargin, title,
+	             theme::kMidiAccent);
 }
 
 void clear(const Rect& r)
@@ -78,11 +77,11 @@ display::Color state_color(midi::LinkState s)
 	switch(s)
 	{
 	case midi::LinkState::Ready:
-		return theme::kAccent;
+		return theme::kOk;
 	case midi::LinkState::NotMidi:
 		return theme::kWarn;
 	case midi::LinkState::Enumerating:
-		return theme::kText;
+		return theme::kBusy;
 	case midi::LinkState::NoDevice:
 		break;
 	}
@@ -162,13 +161,12 @@ void MidiPage::draw_note()
 	{
 		put_str("--", text);
 	}
-	display::draw_text(kMargin, kNoteRow.y, text,
-	                   midi::Parser::active(s) ? theme::kAccent : theme::kDim,
-	                   5);
-	display::draw_text(240, kNoteRow.y + 12,
-	                   midi::Parser::active(s) ? "HELD" : "OFF",
-	                   midi::Parser::active(s) ? theme::kAccent : theme::kDim,
-	                   2);
+	display::draw_text(
+	    kMargin, kNoteRow.y, text,
+	    midi::Parser::active(s) ? theme::kMidiAccent : theme::kDim, 5);
+	display::draw_text(
+	    240, kNoteRow.y + 12, midi::Parser::active(s) ? "HELD" : "OFF",
+	    midi::Parser::active(s) ? theme::kMidiAccent : theme::kDim, 2);
 
 	clear(kVelRow);
 	char* p = put_str("VEL ", text);

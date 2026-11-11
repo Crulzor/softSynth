@@ -14,8 +14,6 @@ using params::Id;
 // --- Layout (kPageW x kPageH) ------------------------------------------------
 // A row of four knobs across the top (ATK / DEC / SUS / REL), the curve
 // preview filling the rest of the page below.
-constexpr int kHeaderH = 11;
-
 constexpr int kKnobY = 14;
 constexpr int kKnobW = 48;
 constexpr int kKnobH = 44;
@@ -94,13 +92,15 @@ void CurvePreview::draw()
 	// polygon is the filled shape.
 	const int xy[10] = {
 	    x0,  yBot, x1, yTop, x2, susY, x3, susY, x4, yBot};
-	display::fill_polygon(xy, 5, theme::kTrack);
+	display::fill_polygon(
+	    xy, 5, theme::mix(theme::kBackground, theme::kEnvAccent, 56));
 
 	// Stroke the envelope on top.
-	display::draw_line(x0, yBot, x1, yTop, theme::kAccent);
-	display::draw_line(x1, yTop, x2, susY, theme::kAccent);
-	display::draw_line(x2, susY, x3, susY, theme::kAccent);
-	display::draw_line(x3, susY, x4, yBot, theme::kAccent);
+	const display::Color c = theme::kEnvAccent;
+	display::draw_line(x0, yBot, x1, yTop, c);
+	display::draw_line(x1, yTop, x2, susY, c);
+	display::draw_line(x2, susY, x3, susY, c);
+	display::draw_line(x3, susY, x4, yBot, c);
 
 	display::draw_rect(x0, yTop, r.w, r.h, theme::kHeader);
 }
@@ -119,13 +119,16 @@ EnvPage::EnvPage(Ctx ctx)
 	widgets_[2] = &knobs_[2];
 	widgets_[3] = &knobs_[3];
 	widgets_[4] = &curve_;
+	for(Knob& k : knobs_)
+	{
+		k.set_accent(theme::kEnvAccent);
+	}
 }
 
 void EnvPage::redraw_all()
 {
 	display::fill(theme::kBackground);
-	display::fill_rect(0, 0, kPageW, kHeaderH, theme::kHeader);
-	display::draw_text(3, 2, "ENV", theme::kText);
+	draw_section(kCurveX, 2, kCurveW, "ENVELOPE", theme::kEnvAccent);
 	for(Widget* w : widgets_)
 	{
 		w->invalidate();

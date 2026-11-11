@@ -22,6 +22,11 @@ inline constexpr int kTabBarH = 26;
 inline constexpr int kNumPages = 6;
 inline constexpr const char* kPageNames[] = {"OSC", "ENV", "MOD", "SEQ",
                                              "MIDI", "DBG"};
+// Each page's section accent: its tab fill and the colour of its values.
+inline constexpr display::Color kPageAccents[] = {
+    theme::kOscAccent, theme::kEnvAccent,  theme::kModAccent,
+    theme::kSeqAccent, theme::kMidiAccent, theme::kDbgAccent};
+inline constexpr int kMidiTab = 4;
 
 // Shared references passed to every page's constructor.
 struct Ctx

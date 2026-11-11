@@ -19,10 +19,14 @@ constexpr float kPxPerStep = 14.0f;
 constexpr float kTwoPi = 6.28318530718f;
 
 // Knob geometry: ring radii and the arc it sweeps (0.75 turn, gap at the
-// bottom, like a real pot).
+// bottom, like a real pot). Compact fits a 36 x 44 cell; large an 84 x 100.
 constexpr int kKnobOuter = 12;
 constexpr int kKnobInner = 9;
+constexpr int kBigOuter = 26;
+constexpr int kBigInner = 20;
+constexpr int kBigCap = 15;  // the knob body inside the ring
 constexpr float kKnobSweep = 0.75f;
+constexpr float kCapArc = 3.0f;  // px of arc at the value drawn bright
 
 // Integer to decimal text. Returns the pointer past the last digit written.
 char* put_int(int v, char* out, bool force_sign)
@@ -64,46 +68,123 @@ void draw_centered(const Rect& r, int y, const char* s, display::Color c,
 	display::draw_text(x, y, s, c, scale);
 }
 
-// The knob ring centred on (cx, cy). `n` is the normalized value; bipolar
-// rings light the arc between 12 o'clock and the value instead of from the
-// start of the sweep.
-void draw_ring(int cx, int cy, float n, bool bipolar)
+float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+// Clockwise angle from 12 o'clock in turns, -0.5..0.5. Screen y points down,
+// hence -dy.
+float turns_of(float dx, float dy) { return std::atan2(dx, -dy) / kTwoPi; }
+
+// The knob ring centred on (cx, cy), radii `outer` / `inner`, drawn over a
+// `bg`-coloured cell. `n` is the normalized value; bipolar rings light the
+// arc between 12 o'clock and the value instead of from the start of the
+// sweep. The ring's round edges are anti-aliased against `bg`, and the last
+// few pixels of lit arc at the value are drawn bright, as the pointer.
+void draw_ring(int cx, int cy, int outer, int inner, float n, bool bipolar,
+               display::Color accent, display::Color bg)
 {
 	const float start = -kKnobSweep / 2.0f;  // in turns, 0 = 12 o'clock
-	for(int dy = -kKnobOuter; dy <= kKnobOuter; ++dy)
+	const float ro = static_cast<float>(outer);
+	const float ri = static_cast<float>(inner);
+	const float lo = bipolar ? (n < 0.5f ? n : 0.5f) : 0.0f;
+	const float hi = bipolar ? (n < 0.5f ? 0.5f : n) : n;
+	// The bright tip, as a fraction of the sweep at mid radius.
+	const float tip = kCapArc / (kTwoPi * 0.5f * (ro + ri) * kKnobSweep);
+	for(int dy = -outer; dy <= outer; ++dy)
 	{
-		for(int dx = -kKnobOuter; dx <= kKnobOuter; ++dx)
+		for(int dx = -outer; dx <= outer; ++dx)
 		{
-			const int d2 = dx * dx + dy * dy;
-			if(d2 > kKnobOuter * kKnobOuter || d2 < kKnobInner * kKnobInner)
+			const float d = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+			const float cover =
+			    clamp01(ro + 0.5f - d) * clamp01(d - (ri - 0.5f));
+			if(cover <= 0.0f)
 			{
 				continue;
 			}
-			// Clockwise angle from 12 o'clock in turns, -0.5..0.5. Screen y
-			// points down, hence -dy.
-			const float turns =
-			    std::atan2(static_cast<float>(dx), static_cast<float>(-dy)) /
-			    kTwoPi;
-			const float pos = (turns - start) / kKnobSweep;  // 0..1 on the arc
+			const float pos =
+			    (turns_of(static_cast<float>(dx), static_cast<float>(dy)) -
+				 start) /
+			    kKnobSweep;  // 0..1 on the arc
 			if(pos < 0.0f || pos > 1.0f)
 			{
 				continue;  // the gap at the bottom
 			}
-			bool lit;
-			if(bipolar)
+			display::Color c = theme::kTrack;
+			const bool lit = (hi > lo) && pos >= lo && pos <= hi;
+			if(lit)
 			{
-				const float lo = n < 0.5f ? n : 0.5f;
-				const float hi = n < 0.5f ? 0.5f : n;
-				lit = pos >= lo && pos <= hi;
+				// The tip sits at the value end of the lit arc.
+				const bool at_tip =
+				    (n >= 0.5f || !bipolar) ? pos >= hi - tip : pos <= lo + tip;
+				c = at_tip ? theme::kText : accent;
 			}
-			else
-			{
-				lit = n > 0.0f && pos <= n;
-			}
-			display::put_pixel(cx + dx, cy + dy,
-			                   lit ? theme::kAccent : theme::kTrack);
+			display::put_pixel(
+			    cx + dx, cy + dy,
+			    theme::mix(bg, c, static_cast<int>(cover * 256.0f)));
 		}
 	}
+}
+
+// The knob body inside a large ring: a disc anti-aliased against `bg`, with
+// an anti-aliased pointer line on it at the value's angle. Done per pixel
+// (angular distance from the pointer) so it needs no sin/cos.
+void draw_cap(int cx, int cy, float n, display::Color pointer,
+              display::Color bg)
+{
+	const float r = static_cast<float>(kBigCap);
+	const float angle = -kKnobSweep / 2.0f + n * kKnobSweep;  // in turns
+	for(int dy = -kBigCap; dy <= kBigCap; ++dy)
+	{
+		for(int dx = -kBigCap; dx <= kBigCap; ++dx)
+		{
+			const float d = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+			const float cover = clamp01(r + 0.5f - d);
+			if(cover <= 0.0f)
+			{
+				continue;
+			}
+			display::Color c = theme::kKnobCap;
+			if(d >= 4.5f && d <= 12.5f)
+			{
+				float t =
+				    turns_of(static_cast<float>(dx), static_cast<float>(dy)) -
+				    angle;
+				t -= static_cast<float>(
+				    static_cast<int>(t + (t < 0 ? -0.5f : 0.5f)));
+				const float off = (t < 0 ? -t : t) * kTwoPi * d;  // px
+				const float p = clamp01(1.5f - off);
+				c = theme::mix(c, pointer, static_cast<int>(p * 256.0f));
+			}
+			display::put_pixel(
+			    cx + dx, cy + dy,
+			    theme::mix(bg, c, static_cast<int>(cover * 256.0f)));
+		}
+	}
+}
+
+// A large knob: the ring, then the cap with its pointer.
+void draw_big_knob(int cx, int cy, float n, bool bipolar, display::Color accent,
+                   bool active)
+{
+	draw_ring(cx, cy, kBigOuter, kBigInner, n, bipolar, accent, theme::kPanel);
+	draw_cap(cx, cy, n, active ? accent : theme::kText, theme::kPanel);
+}
+
+// Panel-coloured cell with its corners rounded off against the page
+// background.
+void fill_cell(const Rect& r, display::Color c)
+{
+	display::fill_rect(r.x, r.y, r.w, r.h, c);
+	const display::Color bg = theme::kBackground;
+	const int xr = r.x + r.w - 1;
+	const int yb = r.y + r.h - 1;
+	display::fill_rect(r.x, r.y, 2, 1, bg);
+	display::put_pixel(r.x, r.y + 1, bg);
+	display::fill_rect(xr - 1, r.y, 2, 1, bg);
+	display::put_pixel(xr, r.y + 1, bg);
+	display::fill_rect(r.x, yb, 2, 1, bg);
+	display::put_pixel(r.x, yb - 1, bg);
+	display::fill_rect(xr - 1, yb, 2, 1, bg);
+	display::put_pixel(xr, yb - 1, bg);
 }
 
 // Outlined button with a centred scale-2 label.
@@ -115,6 +196,17 @@ void draw_button(const Rect& r, const char* label)
 }
 
 }  // namespace
+
+void draw_section(int x, int y, int w, const char* label, display::Color accent)
+{
+	const int tw = display::draw_text(x, y, label, accent) - x;
+	const int rx = x + tw + 6;
+	if(rx < x + w)
+	{
+		display::fill_rect(rx, y + 3, x + w - rx, 2,
+		                   theme::mix(theme::kBackground, accent, 96));
+	}
+}
 
 // --- Formatting -------------------------------------------------------------
 
@@ -208,15 +300,27 @@ void Knob::draw()
 	const Rect& r = rect_;
 	const params::Spec& s = params::spec(id_);
 	shown_ = params_.get(id_);
+	const float n = params_.normalized(id_);
+	const bool bipolar = s.min < 0.0f;
 
-	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
-	draw_ring(r.x + r.w / 2, r.y + 2 + kKnobOuter, params_.normalized(id_),
-	          s.min < 0.0f);
-
+	fill_cell(r, theme::kPanel);
 	char text[8];
 	format_value(s, shown_, text);
+	const display::Color label = active_ ? accent_ : theme::kDim;
+
+	if(large_)
+	{
+		draw_big_knob(r.x + r.w / 2, r.y + 6 + kBigOuter, n, bipolar, accent_,
+		              active_);
+		draw_centered(r, r.y + 64, text, theme::kText, 2);
+		draw_centered(r, r.y + 86, s.label, label);
+		return;
+	}
+
+	draw_ring(r.x + r.w / 2, r.y + 2 + kKnobOuter, kKnobOuter, kKnobInner, n,
+	          bipolar, accent_, theme::kPanel);
 	draw_centered(r, r.y + 27, text, theme::kText);
-	draw_centered(r, r.y + 36, s.label, active_ ? theme::kAccent : theme::kDim);
+	draw_centered(r, r.y + 36, s.label, label);
 }
 
 // --- CrossFader -------------------------------------------------------------
@@ -227,25 +331,52 @@ void CrossFader::draw()
 	const params::Spec& s = params::spec(id_);
 	shown_ = params_.get(id_);
 
-	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
+	fill_cell(r, theme::kPanel);
 
 	const int cx = r.x + r.w / 2;
-	const int top = r.y + 8;
-	const int bottom = r.y + r.h - 28;
-	display::fill_rect(cx - 1, top, 3, bottom - top, theme::kTrack);
-	display::draw_text(r.x + 2, top - 4, "1", theme::kDim);
-	display::draw_text(r.x + 2, bottom - 4, "2", theme::kDim);
+	// Large: room for the scale-2 value and the label under the track.
+	const int top = r.y + (large_ ? 16 : 8);
+	const int bottom = r.y + r.h - (large_ ? 44 : 28);
+	const int tw = large_ ? 4 : 3;
+	display::fill_rect(cx - tw / 2, top, tw, bottom - top + 1, theme::kTrack);
+	if(large_)
+	{
+		// Detent ticks at the ends and the centre (an equal mix).
+		// Labelled at the ends: "1" beside the top tick, "2" the bottom.
+		const int mid = (top + bottom) / 2;
+		display::fill_rect(cx - 10, top, 6, 1, theme::kDim);
+		display::fill_rect(cx + 5, top, 6, 1, theme::kDim);
+		display::fill_rect(cx - 10, mid, 6, 1, theme::kTrack);
+		display::fill_rect(cx + 5, mid, 6, 1, theme::kTrack);
+		display::fill_rect(cx - 10, bottom, 6, 1, theme::kDim);
+		display::fill_rect(cx + 5, bottom, 6, 1, theme::kDim);
+		display::draw_text(r.x + 3, top - 4, "1", theme::kDim);
+		display::draw_text(r.x + 3, bottom - 4, "2", theme::kDim);
+	}
+	else
+	{
+		display::draw_text(r.x + 2, top - 4, "1", theme::kDim);
+		display::draw_text(r.x + 2, bottom - 4, "2", theme::kDim);
+	}
 
 	const int ty = top + round_to_int(params_.normalized(id_) *
 	                                  static_cast<float>(bottom - top));
-	display::fill_rect(cx - 8, ty - 3, 17, 7,
-	                   active_ ? theme::kText : theme::kAccent);
-
 	char text[8];
 	format_value(s, shown_, text);
+	const display::Color label = active_ ? accent_ : theme::kDim;
+	if(large_)
+	{
+		const Rect thumb{cx - 14, ty - 5, 29, 11};
+		fill_cell(thumb, active_ ? theme::kText : accent_);
+		display::fill_rect(thumb.x + 3, ty, thumb.w - 6, 1,
+		                   theme::mix(accent_, theme::kBackground, 128));
+		draw_centered(r, r.y + r.h - 30, text, theme::kText, 2);
+		draw_centered(r, r.y + r.h - 12, s.label, label);
+		return;
+	}
+	display::fill_rect(cx - 8, ty - 3, 17, 7, active_ ? theme::kText : accent_);
 	draw_centered(r, r.y + r.h - 19, text, theme::kText);
-	draw_centered(r, r.y + r.h - 9, s.label,
-	              active_ ? theme::kAccent : theme::kDim);
+	draw_centered(r, r.y + r.h - 9, s.label, label);
 }
 
 // --- FloatKnob --------------------------------------------------------------
@@ -298,14 +429,15 @@ void FloatKnob::draw()
 	const Rect& r = rect_;
 	shown_ = *value_;
 
-	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
-	draw_ring(r.x + r.w / 2, r.y + 2 + kKnobOuter, normalized(), min_ < 0.0f);
+	fill_cell(r, theme::kPanel);
+	draw_ring(r.x + r.w / 2, r.y + 2 + kKnobOuter, kKnobOuter, kKnobInner,
+	          normalized(), min_ < 0.0f, accent_, theme::kPanel);
 
 	char text[8];
 	put_int(round_to_int(*value_ * static_cast<float>(text_scale_)), text,
 	        min_ < 0.0f);
 	draw_centered(r, r.y + 27, text, theme::kText);
-	draw_centered(r, r.y + 36, label_, active_ ? theme::kAccent : theme::kDim);
+	draw_centered(r, r.y + 36, label_, active_ ? accent_ : theme::kDim);
 }
 
 // --- Slider -----------------------------------------------------------------
@@ -357,15 +489,15 @@ void Slider::draw()
 	format_value(s, shown_, text);
 	display::draw_text(r.x + 6, r.y + 3, text, theme::kText, 2);
 	display::draw_text(r.x + 6, r.y + r.h - 10, s.label,
-	                   active_ ? theme::kAccent : theme::kDim);
+	                   active_ ? accent_ : theme::kDim);
 
 	const Rect t = track();
 	const int fill =
 	    round_to_int(params_.normalized(id_) * static_cast<float>(t.w));
 	display::fill_rect(t.x, t.y, t.w, t.h, theme::kTrack);
-	display::fill_rect(t.x, t.y, fill, t.h, theme::kAccent);
+	display::fill_rect(t.x, t.y, fill, t.h, accent_);
 	display::fill_rect(t.x + fill - 3, r.y + 6, 7, r.h - 12,
-	                   active_ ? theme::kAccent : theme::kText);
+	                   active_ ? accent_ : theme::kText);
 }
 
 // --- StepGrid ---------------------------------------------------------------
@@ -516,7 +648,7 @@ void StepGrid::draw_cell(int step)
 
 	if(s.on)
 	{
-		draw_centered(c, c.y + (c.h - 24) / 2, "X", theme::kAccent, 3);
+		draw_centered(c, c.y + (c.h - 24) / 2, "X", accent_, 3);
 		format_note(s.note, text);
 		display::draw_text(c.x + c.w - display::text_width(text) - 5,
 		                   c.y + c.h - 13, text, theme::kText);
@@ -548,7 +680,7 @@ void PlayButton::draw()
 	if(shown_run_)
 	{
 		// Playing: lit button with a stop square.
-		display::fill_rect(r.x, r.y, r.w, r.h, theme::kAccent);
+		display::fill_rect(r.x, r.y, r.w, r.h, accent_);
 		display::fill_rect(cx - 6, cy - 6, 12, 12, theme::kBackground);
 		return;
 	}
@@ -606,7 +738,7 @@ void NoteBox::draw()
 	put_int(step + 1, text, false);
 	display::draw_text(r.x + 6, r.y + 19, text, theme::kText);
 	format_note(shown_note_, text);
-	display::draw_text(r.x + 54, r.y + 9, text, theme::kAccent, 2);
+	display::draw_text(r.x + 54, r.y + 9, text, accent_, 2);
 	// A small down-pointing marker: tap here for the note picker.
 	for(int i = 0; i < 4; ++i)
 	{
@@ -752,7 +884,7 @@ void NotePicker::draw()
 		const Rect k = white_key(i);
 		display::fill_rect(
 		    k.x, k.y, k.w, k.h,
-		    kWhiteSemis[i] == current ? theme::kAccent : theme::kWhiteKey);
+		    kWhiteSemis[i] == current ? accent_ : theme::kWhiteKey);
 		draw_centered(k, k.y + k.h - 14, kWhiteNames[i], theme::kBlackKey);
 	}
 	for(int i = 0; i < 5; ++i)
@@ -761,7 +893,7 @@ void NotePicker::draw()
 		display::fill_rect(k.x, k.y, k.w, k.h, theme::kBackground);  // outline
 		display::fill_rect(
 		    k.x + 1, k.y, k.w - 2, k.h - 1,
-		    kBlackSemis[i] == current ? theme::kAccent : theme::kBlackKey);
+		    kBlackSemis[i] == current ? accent_ : theme::kBlackKey);
 	}
 }
 
@@ -784,11 +916,9 @@ int TabBar::tab_at(int x, int y) const
 
 void TabBar::sync()
 {
-	if(active_ != shown_active_ || status_ != shown_status_ ||
-	   transport_.run != shown_run_ || transport_.step != shown_step_)
-	{
-		invalidate();
-	}
+	// The strip shows live values (step, CPU, the MIDI LED) and the page may
+	// draw over the bar, so it redraws every frame; Ui invalidates it anyway.
+	invalidate();
 }
 
 void TabBar::press(int x, int y, std::uint32_t)
@@ -812,50 +942,140 @@ int TabBar::take_switch()
 void TabBar::draw()
 {
 	const Rect& r = rect_;
+	const display::Color active_accent = tab_accents_[active_];
 	display::fill_rect(r.x, r.y, r.w, r.h, theme::kPanel);
-	display::fill_rect(r.x, r.y, r.w, 1, theme::kTrack);
+	// The top edge in the current page's accent ties the bar to the page.
+	display::fill_rect(r.x, r.y, r.w, 1,
+	                   theme::mix(theme::kBackground, active_accent, 128));
 
 	for(int i = 0; i < num_tabs_; ++i)
 	{
 		const Rect t = tab(i);
 		if(i == active_)
 		{
-			display::fill_rect(t.x, t.y, t.w, t.h - 1, theme::kAccent);
+			display::fill_rect(t.x, t.y, t.w, t.h, active_accent);
 		}
 		else
 		{
-			display::fill_rect(t.x + t.w - 1, t.y + 1, 1, t.h - 2,
+			display::fill_rect(t.x + t.w - 1, t.y + 4, 1, t.h - 8,
 			                   theme::kTrack);
 		}
-		draw_centered(t, t.y + (t.h - 8) / 2, tab_names_[i],
+		draw_centered(t, t.y + (t.h - 8) / 2 + 1, tab_names_[i],
 		              i == active_ ? display::colors::Black : theme::kDim);
+		if(i == badge_tab_ && badge_on_)
+		{
+			const display::Color bg =
+			    i == active_ ? active_accent : theme::kPanel;
+			// A small LED in the tab's top-right corner, ringed in the
+			// background so it stays readable on the accent fill too.
+			display::fill_rect(t.x + t.w - 9, t.y + 3, 6, 6,
+			                   i == active_ ? display::colors::Black : bg);
+			display::fill_rect(t.x + t.w - 8, t.y + 4, 4, 4, badge_);
+		}
 	}
 
 	if(status_ != nullptr)
 	{
-		const int dot_x = r.x + r.w - kDot - 4;
-		int x = dot_x - 6 - display::text_width(status_);
-		if(x < r.x + num_tabs_ * kTabW + 4)
-		{
-			x = r.x + num_tabs_ * kTabW + 4;
-		}
-		display::draw_text(x, r.y + (r.h - 8) / 2, status_, theme::kText);
+		const int x0 = strip_x() + 8;
+		int x = r.x + r.w - 6 - display::text_width(status_);
+		display::draw_text(x < x0 ? x0 : x, r.y + (r.h - 8) / 2 + 1, status_,
+		                   theme::kWarn);
+		return;
 	}
+	draw_strip();
+}
 
-	// Transport dot: blinks with the step while running, dim when stopped.
-	const int dot_x = r.x + r.w - kDot - 4;
-	const int dot_y = r.y + (r.h - kDot) / 2;
-	display::Color c = theme::kTrack;
-	if(transport_.run)
+void TabBar::draw_strip()
+{
+	const Rect& r = rect_;
+	const int ty = r.y + (r.h - 8) / 2 + 1;  // text row
+	const int cy = ty + 3;                   // its vertical centre
+	const display::Color seq = theme::kSeqAccent;
+	const bool run = transport_.run;
+	int x = strip_x() + 7;
+
+	// Transport: a play triangle while running, a stop square when not.
+	if(run)
 	{
-		c = ((transport_.step & 1) == 0) ? theme::kAccent : theme::kHeader;
+		for(int i = 0; i < 4; ++i)
+		{
+			display::fill_rect(x + i * 2, cy - 4 + i, 2, 9 - 2 * i, seq);
+		}
 	}
-	display::fill_rect(dot_x, dot_y, kDot, kDot, c);
+	else
+	{
+		display::fill_rect(x, cy - 3, 7, 7, theme::kDim);
+	}
+	x += 13;
 
-	shown_active_ = active_;
-	shown_status_ = status_;
-	shown_run_ = transport_.run;
-	shown_step_ = transport_.step;
+	// Tempo.
+	char text[8];
+	format_int(round_to_int(params_.get(params::Id::Tempo)), text);
+	x = display::draw_text(x, ty, text, run ? theme::kText : theme::kDim);
+	x += 8;
+
+	// The pattern as 16 pips: beat pips are taller, on-steps lighter, the
+	// playing step in the SEQ accent.
+	const int step = transport_.step;
+	for(int i = 0; i < sequencer::kSteps; ++i)
+	{
+		const bool beat = (i % 4) == 0;
+		const int h = beat ? 10 : 6;
+		display::Color c = pattern_.steps[i].on ? theme::kDim : theme::kTrack;
+		if(run && i == step)
+		{
+			c = seq;
+		}
+		display::fill_rect(x + i * 4, cy - h / 2, 3, h, c);
+	}
+	x += sequencer::kSteps * 4 + 6;
+	display::fill_rect(x, r.y + 6, 1, r.h - 12, theme::kTrack);
+
+	// Audio-interrupt load, right-aligned.
+	char* end = format_int(cpu_pct_, text);
+	end[0] = '%';
+	end[1] = '\0';
+	const int vx = r.x + r.w - 6 - display::text_width(text);
+	display::draw_text(vx, ty, text,
+	                   cpu_pct_ >= 80 ? theme::kWarn : theme::kText);
+	display::draw_text(vx - 4 - display::text_width("CPU"), ty, "CPU",
+	                   theme::kDim);
+}
+
+// --- Scope -------------------------------------------------------------------
+
+void Scope::draw()
+{
+	const Rect& r = rect_;
+	fill_cell(r, theme::kPanel);
+
+	// Graticule: dotted quarter divisions, a solid zero line.
+	const display::Color grid = theme::mix(theme::kPanel, theme::kTrack, 160);
+	const int x0 = r.x + 4;
+	const int w = r.w - 8;
+	const int y0 = r.y + 4;
+	const int h = r.h - 8;
+	const int mid = y0 + h / 2;
+	for(int i = 1; i < 4; ++i)
+	{
+		const int gx = x0 + (w * i) / 4;
+		for(int y = y0; y < y0 + h; y += 3)
+		{
+			display::put_pixel(gx, y, grid);
+		}
+	}
+	for(int i = 1; i < 4; i += 2)
+	{
+		const int gy = y0 + (h * i) / 4;
+		for(int x = x0; x < x0 + w; x += 3)
+		{
+			display::put_pixel(x, gy, grid);
+		}
+	}
+	display::fill_rect(x0, mid, w, 1, theme::kTrack);
+
+	// The trace: flat until a sample source is wired in.
+	display::fill_rect(x0, mid, w, 1, theme::mix(theme::kPanel, accent_, 160));
 }
 
 // --- CycleButton --------------------------------------------------------------
@@ -888,10 +1108,9 @@ void CycleButton::draw()
 	const char* name = (v >= 0 && v < count_) ? names_[v] : "???";
 	display::fill_rect(r.x, r.y, r.w, r.h,
 	                   pressed_ ? theme::kHeader : theme::kPanel);
-	display::draw_rect(r.x, r.y, r.w, r.h,
-	                   pressed_ ? theme::kAccent : theme::kDim);
+	display::draw_rect(r.x, r.y, r.w, r.h, pressed_ ? accent_ : theme::kDim);
 	draw_centered(r, r.y + (r.h - 8) / 2, name,
-	              pressed_ ? theme::kAccent : theme::kText);
+	              pressed_ ? accent_ : theme::kText);
 }
 
 }  // namespace ui
